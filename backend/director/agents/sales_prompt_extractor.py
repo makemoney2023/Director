@@ -96,74 +96,97 @@ class SalesPromptExtractorAgent(BaseAgent):
 
     def _get_analysis_prompt(self, transcript: str, analysis_type: str) -> str:
         """Generate appropriate prompt based on analysis type"""
-        base_prompt = """Analyze the following transcript for sales techniques and concepts.
+        base_prompt = """You are an expert sales analyst. Analyze the following transcript for sales techniques and concepts.
+        Focus on extracting actionable insights that can be used to train an AI sales assistant.
+        
         Provide your analysis in the following JSON format:
         {
             "sales_techniques": [
                 {
                     "name": "technique name",
-                    "description": "detailed description",
-                    "examples": ["example from transcript"],
-                    "context": "when/how to use"
+                    "description": "detailed description of how the technique works",
+                    "examples": ["specific example from transcript"],
+                    "context": "detailed explanation of when and how to use this technique"
                 }
             ],
             "communication_strategies": [
                 {
                     "type": "strategy type",
-                    "description": "strategy description",
-                    "application": "how to apply"
+                    "description": "detailed explanation of the communication strategy",
+                    "application": "specific guidance on how and when to apply this strategy"
                 }
             ],
             "objection_handling": [
                 {
-                    "objection_type": "type of objection",
-                    "recommended_response": "how to handle",
-                    "examples": ["example from transcript"]
+                    "objection_type": "specific type of objection",
+                    "recommended_response": "detailed response strategy",
+                    "examples": ["specific example from transcript"],
+                    "psychology": "explanation of the customer psychology behind this objection"
                 }
             ],
             "closing_techniques": [
                 {
                     "name": "technique name",
-                    "description": "how it works",
-                    "effectiveness": "when it's most effective"
+                    "description": "detailed explanation of how the technique works",
+                    "effectiveness": "specific scenarios where this technique is most effective",
+                    "psychology": "explanation of why this technique works psychologically"
                 }
             ]
         }
         
-        Focus on extracting:
-        1. Key sales techniques used
-        2. Communication strategies demonstrated
-        3. Objection handling approaches shown
-        4. Closing techniques employed"""
+        Guidelines for analysis:
+        1. Extract techniques that are both explicitly mentioned and implicitly demonstrated
+        2. Focus on modern, ethical sales approaches that build trust
+        3. Include psychological insights where relevant
+        4. Provide specific, actionable examples from the transcript
+        5. Ensure all descriptions are detailed enough to be implemented by an AI
         
+        Remember to maintain the exact JSON structure in your response."""
+
         if analysis_type == "sales_techniques":
-            base_prompt += "\nFocus specifically on concrete sales techniques and their application."
+            base_prompt += "\nFocus specifically on concrete sales techniques and their application, including both explicit and implicit techniques used in the transcript."
         elif analysis_type == "communication":
-            base_prompt += "\nFocus specifically on communication strategies and customer interaction."
+            base_prompt += "\nFocus specifically on communication strategies, emotional intelligence, and customer interaction patterns demonstrated in the transcript."
             
         return f"{base_prompt}\n\nTranscript:\n{transcript}"
 
     def _structure_analysis(self, analysis_text: str) -> Dict:
         """Structure the analysis response into a standardized format"""
         try:
-            # Try to extract JSON from the response
-            json_match = re.search(r'\{[\s\S]*\}', analysis_text)
-            if json_match:
-                structured_data = json.loads(json_match.group(0))
-            else:
-                # If no JSON found, create basic structure
-                structured_data = {
-                    "sales_techniques": [],
-                    "communication_strategies": [],
-                    "objection_handling": [],
-                    "closing_techniques": []
-                }
+            # Try to extract JSON from the response using a more robust pattern
+            json_pattern = r'(\{[\s\S]*\})'
+            json_matches = re.finditer(json_pattern, analysis_text)
+            
+            # Try each potential JSON match
+            for match in json_matches:
+                try:
+                    structured_data = json.loads(match.group(0))
+                    # Validate the structure
+                    required_keys = ["sales_techniques", "communication_strategies", 
+                                   "objection_handling", "closing_techniques"]
+                    if all(key in structured_data for key in required_keys):
+                        return {
+                            "structured_data": structured_data,
+                            "raw_analysis": analysis_text
+                        }
+                except json.JSONDecodeError:
+                    continue
+            
+            # If no valid JSON found, create basic structure
+            logger.warning("No valid JSON found in analysis response, using fallback structure")
+            structured_data = {
+                "sales_techniques": [],
+                "communication_strategies": [],
+                "objection_handling": [],
+                "closing_techniques": []
+            }
             
             return {
                 "structured_data": structured_data,
                 "raw_analysis": analysis_text
             }
         except Exception as e:
+            logger.error(f"Error structuring analysis: {str(e)}")
             raise Exception(f"Failed to structure analysis: {str(e)}")
 
     def _generate_prompt(self, analysis_data: Dict) -> Dict:
@@ -197,49 +220,71 @@ class SalesPromptExtractorAgent(BaseAgent):
     def _generate_system_prompt(self, structured_data: Dict) -> str:
         """Generate the system prompt from structured analysis"""
         prompt_parts = [
-            "You are an AI sales assistant trained to engage with customers effectively.",
+            "You are an AI sales assistant trained to engage with customers effectively and ethically. Your responses should be natural, empathetic, and focused on building genuine value for the customer.",
+            "\nCore Capabilities:",
+            "- Understand and adapt to customer needs and communication styles",
+            "- Build trust through transparency and ethical sales practices",
+            "- Provide relevant information and solutions",
+            "- Handle objections professionally and empathetically",
             "\nYour approach is based on the following sales techniques and strategies:"
         ]
 
-        # Add sales techniques
+        # Add sales techniques with enhanced context
         if structured_data.get("sales_techniques"):
-            prompt_parts.append("\nKey Sales Techniques:")
+            prompt_parts.append("\n### Sales Techniques")
             for technique in structured_data["sales_techniques"]:
-                prompt_parts.append(f"- {technique['name']}: {technique['description']}")
-                if technique.get("context"):
-                    prompt_parts.append(f"  Use when: {technique['context']}")
+                prompt_parts.extend([
+                    f"\n#### {technique['name']}",
+                    f"- **Purpose**: {technique['description']}",
+                    f"- **When to Use**: {technique['context']}"
+                ])
 
-        # Add communication strategies
+        # Add communication strategies with practical guidelines
         if structured_data.get("communication_strategies"):
-            prompt_parts.append("\nCommunication Strategies:")
+            prompt_parts.append("\n### Communication Guidelines")
             for strategy in structured_data["communication_strategies"]:
-                prompt_parts.append(f"- {strategy['type']}: {strategy['description']}")
-                if strategy.get("application"):
-                    prompt_parts.append(f"  Application: {strategy['application']}")
+                prompt_parts.extend([
+                    f"\n#### {strategy['type']}",
+                    f"- **Approach**: {strategy['description']}",
+                    f"- **Implementation**: {strategy['application']}"
+                ])
 
-        # Add objection handling
+        # Add objection handling with psychological insights
         if structured_data.get("objection_handling"):
-            prompt_parts.append("\nWhen handling objections:")
+            prompt_parts.append("\n### Objection Handling Framework")
             for objection in structured_data["objection_handling"]:
-                prompt_parts.append(f"- If customer mentions {objection['objection_type']}:")
-                prompt_parts.append(f"  Response: {objection['recommended_response']}")
+                prompt_parts.extend([
+                    f"\n#### When customer expresses: {objection['objection_type']}",
+                    f"- **Response Strategy**: {objection['recommended_response']}",
+                    f"- **Psychology**: {objection.get('psychology', 'Address underlying concerns with empathy')}"
+                ])
 
-        # Add closing techniques
+        # Add closing techniques with effectiveness criteria
         if structured_data.get("closing_techniques"):
-            prompt_parts.append("\nClosing Techniques:")
+            prompt_parts.append("\n### Conversion Strategies")
             for technique in structured_data["closing_techniques"]:
-                prompt_parts.append(f"- {technique['name']}: {technique['description']}")
-                if technique.get("effectiveness"):
-                    prompt_parts.append(f"  Most effective: {technique['effectiveness']}")
+                prompt_parts.extend([
+                    f"\n#### {technique['name']}",
+                    f"- **Method**: {technique['description']}",
+                    f"- **Best Used When**: {technique['effectiveness']}",
+                    f"- **Psychological Impact**: {technique.get('psychology', 'Creates natural progression to decision')}"
+                ])
 
-        # Add general guidelines
+        # Add core principles
         prompt_parts.extend([
-            "\nGeneral Guidelines:",
-            "- Always maintain a professional and helpful tone",
-            "- Listen actively and acknowledge customer concerns",
-            "- Use appropriate techniques based on the conversation context",
-            "- Be transparent and honest in all interactions",
-            "- Focus on providing value to the customer"
+            "\n### Core Principles:",
+            "1. Always prioritize customer value over immediate sales",
+            "2. Be transparent about capabilities and limitations",
+            "3. Use active listening and thoughtful responses",
+            "4. Maintain professional and friendly tone",
+            "5. Respect customer time and decisions",
+            "6. Focus on building long-term relationships",
+            "\n### Response Guidelines:",
+            "- Keep responses clear and concise",
+            "- Use natural, conversational language",
+            "- Adapt tone to customer's style",
+            "- Provide specific, relevant information",
+            "- Ask clarifying questions when needed"
         ])
 
         return "\n".join(prompt_parts)
