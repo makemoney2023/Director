@@ -5,6 +5,8 @@ from werkzeug.utils import secure_filename
 
 from director.db import load_db
 from director.handler import ChatHandler, SessionHandler, VideoDBHandler, ConfigHandler
+from director.agents.sales_prompt_extractor import SalesPromptExtractorAgent
+from director.core.session import Session
 
 
 agent_bp = Blueprint("agent", __name__, url_prefix="/agent")
@@ -22,6 +24,40 @@ def agent():
         db=load_db(os.getenv("SERVER_DB_TYPE", app.config["DB_TYPE"]))
     )
     return chat_handler.agents_list()
+
+
+@agent_bp.route("/sales-prompt", methods=["POST"], strict_slashes=False)
+async def analyze_sales_video():
+    """
+    Analyze a video for sales techniques and generate prompts
+    """
+    data = request.get_json()
+    video_id = data.get("video_id")
+    analysis_type = data.get("analysis_type", "full")
+    output_format = data.get("output_format", "both")
+
+    if not video_id:
+        return {"message": "Please provide a video_id."}, 400
+
+    chat_handler = ChatHandler(
+        db=load_db(os.getenv("SERVER_DB_TYPE", app.config["DB_TYPE"]))
+    )
+    
+    # Create a new session for this analysis
+    session = Session()
+    
+    # Initialize the agent
+    agent = SalesPromptExtractorAgent(session)
+    
+    # Run the analysis
+    result = await agent.run(video_id=video_id, analysis_type=analysis_type, output_format=output_format)
+    
+    return {
+        "status": result.status,
+        "message": result.message,
+        "data": result.data,
+        "session_id": session.id
+    }
 
 
 @session_bp.route("/", methods=["GET"], strict_slashes=False)

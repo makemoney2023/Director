@@ -15,4 +15,6 @@ class ChatNamespace(Namespace):
         chat_handler = ChatHandler(
             db=load_db(os.getenv("SERVER_DB_TYPE", app.config["DB_TYPE"]))
         )
-        chat_handler.chat(message)
+        # Run the chat handler and emit the response
+        response = chat_handler.chat(message)
+        self.emit("chat", response)

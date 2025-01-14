@@ -193,7 +193,16 @@ class ReasoningEngine:
         self.output_message.actions.append(f"Running @{agent_name} agent")
         self.output_message.agents.append(agent_name)
         self.output_message.push_update()
-        return agent.safe_call(*args, **kwargs)
+        
+        # Check if the agent's run method is async
+        import asyncio
+        import inspect
+        
+        response = agent.run(*args, **kwargs)
+        if inspect.iscoroutine(response):
+            # If it's an async agent, run it with asyncio
+            return asyncio.run(response)
+        return response
 
     def stop(self):
         """Flag the tool to stop processing and exit the run() thread."""

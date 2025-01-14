@@ -81,8 +81,10 @@ configs = dict(local=LocalAppConfig, production=ProductionAppConfig)
 app = create_app(app_config=configs[os.getenv("SERVER_ENV", "local")])
 
 if __name__ == "__main__":
-    app.run(
+    socketio = app.socketio
+    socketio.run(
+        app,
         host=os.getenv("SERVER_HOST", app.config["HOST"]),
         port=os.getenv("SERVER_PORT", app.config["PORT"]),
-        reloader_type="stat",
+        debug=app.config["DEBUG"]
     )

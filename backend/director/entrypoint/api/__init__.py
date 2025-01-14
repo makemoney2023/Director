@@ -10,6 +10,7 @@ from flask_cors import CORS
 from flask import Flask
 from flask_socketio import SocketIO
 from logging.config import dictConfig
+import asyncio
 
 from director.entrypoint.api.routes import agent_bp, session_bp, videodb_bp, config_bp
 from director.entrypoint.api.socket_io import ChatNamespace
@@ -41,7 +42,7 @@ def create_app(app_config: object):
         cors_allowed_origins="*",
         logger=True,
         engineio_logger=True,
-        reconnection=False if app.config["DEBUG"] else True,
+        reconnection=False if app.config["DEBUG"] else True
     )
     app.socketio = socketio
 

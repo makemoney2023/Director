@@ -190,6 +190,11 @@ class OutputMessage(BaseMessage):
     msg_type: MsgType = MsgType.output
     status: MsgStatus = MsgStatus.progress
 
+    def add_content(self, content):
+        """Add content to the message."""
+        self.content.append(content)
+        self.push_update()
+
     def update_status(self, status: MsgStatus):
         """Update the status of the message and publish the message to the socket. for loading state."""
         self.status = status
