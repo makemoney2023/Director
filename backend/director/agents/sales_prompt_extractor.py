@@ -1,473 +1,490 @@
 import logging
-from typing import Dict, List, Optional
+import sys
+import codecs
+from typing import Dict, List, Optional, Any, Literal
 import json
 import re
 from datetime import datetime
+from pydantic import BaseModel
+import time
 
 from director.agents.base import BaseAgent, AgentResponse, AgentStatus
 from director.agents.transcription import TranscriptionAgent
 from director.agents.summarize_video import SummarizeVideoAgent
+from director.agents.sales_voice_prompt_agent import SalesVoicePromptAgent
+from director.agents.sales_conversation_agent import SalesConversationAgent
 from director.core.session import (
     Session,
     TextContent,
     MsgStatus,
     ContextMessage,
     RoleTypes,
+    OutputMessage,
 )
 from director.llm import get_default_llm
+from director.tools.anthropic_tool import AnthropicTool
+from director.llm.openai import OpenAI, OpenaiConfig, OpenAIChatModel
+from director.llm.base import LLMResponseStatus
+
+# Configure UTF-8 encoding for stdout
+if sys.stdout.encoding != 'utf-8':
+    sys.stdout = codecs.getwriter('utf-8')(sys.stdout.buffer, 'strict')
+    sys.stderr = codecs.getwriter('utf-8')(sys.stderr.buffer, 'strict')
+
+# Configure logging with UTF-8 encoding and file output
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('sales_prompt_extractor.log', encoding='utf-8'),
+        logging.StreamHandler(codecs.getwriter('utf-8')(sys.stdout.buffer) if hasattr(sys.stdout, 'buffer') else sys.stdout)
+    ]
+)
 
 logger = logging.getLogger(__name__)
+
+def _clean_text_for_logging(text: str) -> str:
+    """Clean text for logging by replacing problematic Unicode characters"""
+    return (text.replace('→', '->') 
+            .replace('←', '<-')
+            .replace('⇒', '=>')
+            .replace('⇐', '<=')
+            .encode('ascii', 'replace')
+            .decode('ascii'))
 
 SALES_PROMPT_PARAMETERS = {
     "type": "object",
     "properties": {
         "video_id": {
             "type": "string",
-            "description": "The ID of the video to analyze",
+            "description": "The ID of the video to analyze"
+        },
+        "collection_id": {
+            "type": "string", 
+            "description": "The ID of the collection containing the video"
         },
         "analysis_type": {
             "type": "string",
             "enum": ["sales_techniques", "communication", "full"],
             "default": "full",
-            "description": "Type of analysis to perform",
+            "description": "Type of analysis to perform"
         },
         "output_format": {
             "type": "string",
             "enum": ["structured", "text", "both"],
             "default": "both",
-            "description": "Format of the analysis output",
+            "description": "Format of the analysis output"
         }
     },
-    "required": ["video_id"]
+    "required": ["video_id", "collection_id"],
+    "description": "Analyzes sales techniques and generates AI voice agent prompts",
+    "bypass_reasoning": True,
+    "example_queries": [
+        "@sales_prompt_extractor analyze video_id=123 collection_id=456",
+        "@sales_prompt_extractor"
+    ]
 }
+
+class AnthropicResponse(BaseModel):
+    """Model for storing Anthropic responses"""
+    content: str
+    timestamp: datetime
+    status: str
+    metadata: Dict = {}
 
 class SalesAnalysisContent(TextContent):
     """Content type for sales analysis results"""
-    def __init__(self, analysis_data: Dict, **kwargs):
+    analysis_data: Dict = {}
+    anthropic_response: Optional[AnthropicResponse] = None
+    
+    def __init__(self, analysis_data: Dict = None, anthropic_response: Dict = None, **kwargs):
         super().__init__(**kwargs)
-        self.analysis_data = analysis_data
+        self.analysis_data = analysis_data if analysis_data is not None else {}
+        self.anthropic_response = AnthropicResponse(**anthropic_response) if anthropic_response else None
 
     def to_dict(self) -> Dict:
         base_dict = super().to_dict()
         base_dict.update({
-            "analysis_data": self.analysis_data
+            "analysis_data": self.analysis_data,
+            "anthropic_response": self.anthropic_response.dict() if self.anthropic_response else None
         })
         return base_dict
+
+    def store_anthropic_response(self, content: str, status: str = "success", metadata: Dict = None):
+        """Store Anthropic response with metadata"""
+        self.anthropic_response = AnthropicResponse(
+            content=content,
+            timestamp=datetime.now(),
+            status=status,
+            metadata=metadata or {}
+        )
+
+class ConversationMessage(BaseModel):
+    """A single message in a conversation"""
+    role: Literal["user", "assistant"]
+    content: str
+
+class Conversation(BaseModel):
+    """A complete conversation example"""
+    title: str
+    scenario: str
+    techniques_used: List[str]
+    conversation: List[ConversationMessage]
+
+class ConversationResponse(BaseModel):
+    """The complete response structure for conversation generation"""
+    explanation: str
+    conversations: List[Conversation]
 
 class SalesPromptExtractorAgent(BaseAgent):
     """Agent for extracting sales concepts and generating AI voice agent prompts"""
     
     def __init__(self, session: Session, **kwargs):
         self.agent_name = "sales_prompt_extractor"
-        self.description = "Analyzes video content to extract sales techniques and generate AI voice agent prompts"
+        self.description = "Analyzes sales techniques and generates AI voice agent prompts"
         self.parameters = SALES_PROMPT_PARAMETERS
-        self.llm = get_default_llm()
         super().__init__(session=session, **kwargs)
         
         # Initialize dependent agents
         self.transcription_agent = TranscriptionAgent(session)
         self.summarize_agent = SummarizeVideoAgent(session)
-
-    def _get_transcript(self, video_id: str) -> str:
-        """Get transcript using existing transcription agent"""
-        response = self.transcription_agent.run(
-            video_id=video_id,
-            collection_id=self.session.collection_id
-        )
-        if response.status != AgentStatus.SUCCESS:
-            raise Exception(f"Failed to get transcript: {response.message}")
-        return response.data.get("transcript", "")
-
-    def _analyze_content(self, transcript: str, analysis_type: str) -> Dict:
-        """Analyze transcript for sales concepts"""
-        # Prepare prompt for sales-specific analysis
-        analysis_prompt = self._get_analysis_prompt(transcript, analysis_type)
         
-        # Get analysis from LLM
-        analysis_response = self.llm.chat_completions(
-            messages=[{
-                "role": "system",
-                "content": analysis_prompt
-            }]
-        )
-        
-        # Process and structure the response
-        return self._structure_analysis(analysis_response.content)
+        # Initialize LLMs
+        self.llm = get_default_llm()
+        self.analysis_llm = kwargs.get('analysis_llm') or AnthropicTool()
+        self.max_retries = 3
+        self.retry_delay = 2  # seconds
 
-    def _get_analysis_prompt(self, transcript: str, analysis_type: str) -> str:
+    def _get_analysis_prompt(self, transcript: str, analysis_type: str) -> List[Dict[str, str]]:
         """Generate appropriate prompt based on analysis type"""
-        base_prompt = """You are an expert sales analyst. Analyze the following transcript for sales techniques and concepts.
-        Focus on extracting actionable insights that can be used to train an AI sales assistant.
-        
-        Provide your analysis in the following JSON format:
-        {
-            "sales_techniques": [
+        try:
+            logger.info("=== Generating Analysis Prompt ===")
+            messages = [
                 {
-                    "name": "technique name",
-                    "description": "detailed description of how the technique works",
-                    "examples": ["specific example from transcript"],
-                    "context": "detailed explanation of when and how to use this technique"
-                }
-            ],
-            "communication_strategies": [
+                    "role": "system",
+                    "content": """You are an expert sales analyst. Your task is to analyze sales conversations and provide clear, actionable insights.
+Focus on identifying:
+1. Effective sales techniques used
+2. Communication strategies
+3. Objection handling approaches
+4. Voice agent guidelines
+
+Provide your analysis in a clear, structured format using bullet points and sections."""
+                },
                 {
-                    "type": "strategy type",
-                    "description": "detailed explanation of the communication strategy",
-                    "application": "specific guidance on how and when to apply this strategy"
-                }
-            ],
-            "objection_handling": [
-                {
-                    "objection_type": "specific type of objection",
-                    "recommended_response": "detailed response strategy",
-                    "examples": ["specific example from transcript"],
-                    "psychology": "explanation of the customer psychology behind this objection"
-                }
-            ],
-            "closing_techniques": [
-                {
-                    "name": "technique name",
-                    "description": "detailed explanation of how the technique works",
-                    "effectiveness": "specific scenarios where this technique is most effective",
-                    "psychology": "explanation of why this technique works psychologically"
+                    "role": "user",
+                    "content": f"""Please analyze this sales conversation transcript and provide detailed insights in the following areas:
+
+1. Sales Techniques Used
+• Identify specific techniques demonstrated
+• Provide brief examples from the transcript
+• Note when each technique is most effective
+
+2. Communication Strategies
+• Key patterns and approaches used
+• Notable phrases and responses
+• Tone and style observations
+• Effectiveness of different approaches
+
+3. Objection Handling
+• How objections were addressed
+• Successful response strategies
+• Examples of effective handling
+
+4. Voice Agent Guidelines
+• Recommended phrases to use
+• Response templates
+• Communication style recommendations
+• Best practices identified
+
+Please analyze the following transcript:
+
+{transcript}
+
+Format your response with clear sections and bullet points for easy reading."""
                 }
             ]
-        }
-        
-        Guidelines for analysis:
-        1. Extract techniques that are both explicitly mentioned and implicitly demonstrated
-        2. Focus on modern, ethical sales approaches that build trust
-        3. Include psychological insights where relevant
-        4. Provide specific, actionable examples from the transcript
-        5. Ensure all descriptions are detailed enough to be implemented by an AI
-        
-        Remember to maintain the exact JSON structure in your response."""
-
-        if analysis_type == "sales_techniques":
-            base_prompt += "\nFocus specifically on concrete sales techniques and their application, including both explicit and implicit techniques used in the transcript."
-        elif analysis_type == "communication":
-            base_prompt += "\nFocus specifically on communication strategies, emotional intelligence, and customer interaction patterns demonstrated in the transcript."
-            
-        return f"{base_prompt}\n\nTranscript:\n{transcript}"
-
-    def _structure_analysis(self, analysis_text: str) -> Dict:
-        """Structure the analysis response into a standardized format"""
-        try:
-            # Try to extract JSON from the response using a more robust pattern
-            json_pattern = r'(\{[\s\S]*\})'
-            json_matches = re.finditer(json_pattern, analysis_text)
-            
-            # Try each potential JSON match
-            for match in json_matches:
-                try:
-                    structured_data = json.loads(match.group(0))
-                    # Validate the structure
-                    required_keys = ["sales_techniques", "communication_strategies", 
-                                   "objection_handling", "closing_techniques"]
-                    if all(key in structured_data for key in required_keys):
-                        return {
-                            "structured_data": structured_data,
-                            "raw_analysis": analysis_text
-                        }
-                except json.JSONDecodeError:
-                    continue
-            
-            # If no valid JSON found, create basic structure
-            logger.warning("No valid JSON found in analysis response, using fallback structure")
-            structured_data = {
-                "sales_techniques": [],
-                "communication_strategies": [],
-                "objection_handling": [],
-                "closing_techniques": []
-            }
-            
-            return {
-                "structured_data": structured_data,
-                "raw_analysis": analysis_text
-            }
+            logger.info("Analysis prompt generated successfully")
+            return messages
         except Exception as e:
-            logger.error(f"Error structuring analysis: {str(e)}")
-            raise Exception(f"Failed to structure analysis: {str(e)}")
+            logger.error(f"Error generating analysis prompt: {str(e)}", exc_info=True)
+            raise
 
-    def _generate_prompt(self, analysis_data: Dict) -> Dict:
-        """Generate AI voice agent prompt from analysis"""
+    def _store_analysis_response(self, content: str, status: str = "success", metadata: Dict = None) -> None:
+        """Store analysis response in the database"""
         try:
-            structured_data = analysis_data.get("structured_data", {})
+            # Get the current content or create new if doesn't exist
+            if not self.output_message.content:
+                text_content = SalesAnalysisContent(
+                    agent_name=self.agent_name,
+                    status=MsgStatus.progress,
+                    status_message="Storing analysis..."
+                )
+                self.output_message.content.append(text_content)
+            else:
+                # Ensure we're working with a SalesAnalysisContent object
+                text_content = self.output_message.content[-1]
+                if not isinstance(text_content, SalesAnalysisContent):
+                    text_content = SalesAnalysisContent(
+                        agent_name=self.agent_name,
+                        status=MsgStatus.progress,
+                        status_message="Storing analysis..."
+                    )
+                    self.output_message.content[-1] = text_content
+
+            # Store the response
+            text_content.anthropic_response = AnthropicResponse(
+                content=content,
+                timestamp=datetime.now(),
+                status=status,
+                metadata=metadata or {}
+            )
             
-            # Generate system prompt
-            system_prompt = self._generate_system_prompt(structured_data)
+            # Update message status
+            text_content.status = MsgStatus.success if status == "success" else MsgStatus.error
+            text_content.status_message = "Analysis stored successfully" if status == "success" else "Error storing analysis"
+            text_content.text = content  # Set the text content for display
             
-            # Generate example conversations
-            example_conversations = self._generate_example_conversations(structured_data)
+            # Push update to database
+            self.output_message.push_update()
+            logger.info(f"Analysis response stored with status: {status}")
             
-            # Generate first message
-            first_message = "Hello! I'm here to help you today. How can I assist you?"
-            
-            return {
-                "system_prompt": system_prompt,
-                "first_message": first_message,
-                "example_conversations": example_conversations,
-                "metadata": {
-                    "techniques_used": len(structured_data.get("sales_techniques", [])),
-                    "strategies_used": len(structured_data.get("communication_strategies", [])),
-                    "timestamp": datetime.now().isoformat()
-                }
-            }
         except Exception as e:
-            logger.error(f"Error generating prompt: {str(e)}")
-            raise Exception(f"Failed to generate prompt: {str(e)}")
-
-    def _generate_system_prompt(self, structured_data: Dict) -> str:
-        """Generate the system prompt from structured analysis"""
-        prompt_parts = [
-            "You are an AI sales assistant trained to engage with customers effectively and ethically. Your responses should be natural, empathetic, and focused on building genuine value for the customer.",
-            "\nCore Capabilities:",
-            "- Understand and adapt to customer needs and communication styles",
-            "- Build trust through transparency and ethical sales practices",
-            "- Provide relevant information and solutions",
-            "- Handle objections professionally and empathetically",
-            "\nYour approach is based on the following sales techniques and strategies:"
-        ]
-
-        # Add sales techniques with enhanced context
-        if structured_data.get("sales_techniques"):
-            prompt_parts.append("\n### Sales Techniques")
-            for technique in structured_data["sales_techniques"]:
-                prompt_parts.extend([
-                    f"\n#### {technique['name']}",
-                    f"- **Purpose**: {technique['description']}",
-                    f"- **When to Use**: {technique['context']}"
-                ])
-
-        # Add communication strategies with practical guidelines
-        if structured_data.get("communication_strategies"):
-            prompt_parts.append("\n### Communication Guidelines")
-            for strategy in structured_data["communication_strategies"]:
-                prompt_parts.extend([
-                    f"\n#### {strategy['type']}",
-                    f"- **Approach**: {strategy['description']}",
-                    f"- **Implementation**: {strategy['application']}"
-                ])
-
-        # Add objection handling with psychological insights
-        if structured_data.get("objection_handling"):
-            prompt_parts.append("\n### Objection Handling Framework")
-            for objection in structured_data["objection_handling"]:
-                prompt_parts.extend([
-                    f"\n#### When customer expresses: {objection['objection_type']}",
-                    f"- **Response Strategy**: {objection['recommended_response']}",
-                    f"- **Psychology**: {objection.get('psychology', 'Address underlying concerns with empathy')}"
-                ])
-
-        # Add closing techniques with effectiveness criteria
-        if structured_data.get("closing_techniques"):
-            prompt_parts.append("\n### Conversion Strategies")
-            for technique in structured_data["closing_techniques"]:
-                prompt_parts.extend([
-                    f"\n#### {technique['name']}",
-                    f"- **Method**: {technique['description']}",
-                    f"- **Best Used When**: {technique['effectiveness']}",
-                    f"- **Psychological Impact**: {technique.get('psychology', 'Creates natural progression to decision')}"
-                ])
-
-        # Add core principles
-        prompt_parts.extend([
-            "\n### Core Principles:",
-            "1. Always prioritize customer value over immediate sales",
-            "2. Be transparent about capabilities and limitations",
-            "3. Use active listening and thoughtful responses",
-            "4. Maintain professional and friendly tone",
-            "5. Respect customer time and decisions",
-            "6. Focus on building long-term relationships",
-            "\n### Response Guidelines:",
-            "- Keep responses clear and concise",
-            "- Use natural, conversational language",
-            "- Adapt tone to customer's style",
-            "- Provide specific, relevant information",
-            "- Ask clarifying questions when needed"
-        ])
-
-        return "\n".join(prompt_parts)
-
-    def _generate_example_conversations(self, structured_data: Dict) -> List[Dict]:
-        """Generate example conversations from the analysis"""
-        examples = []
-        
-        # Generate examples based on objection handling
-        for objection in structured_data.get("objection_handling", []):
-            if objection.get("examples"):
-                example = {
-                    "title": f"Handling {objection['objection_type']}",
-                    "conversation": [
-                        {"role": "user", "content": objection["examples"][0]},
-                        {"role": "assistant", "content": objection["recommended_response"]}
-                    ]
-                }
-                examples.append(example)
-
-        # Generate examples based on sales techniques
-        for technique in structured_data.get("sales_techniques", []):
-            if technique.get("examples"):
-                example = {
-                    "title": f"Using {technique['name']}",
-                    "conversation": [
-                        {"role": "assistant", "content": technique["examples"][0]},
-                        {"role": "user", "content": "Tell me more about that."},
-                        {"role": "assistant", "content": technique["description"]}
-                    ]
-                }
-                examples.append(example)
-
-        # Add a general conversation flow example
-        examples.append({
-            "title": "Complete Sales Interaction",
-            "conversation": [
-                {"role": "user", "content": "I'm interested in learning more about your product."},
-                {"role": "assistant", "content": "I'd be happy to help you learn more. What specific aspects are you most interested in?"},
-                {"role": "user", "content": "I'm concerned about the price."},
-                {"role": "assistant", "content": "I understand price is an important factor. Let me explain the value you'll receive..."},
-                {"role": "user", "content": "That makes sense, but I need to think about it."},
-                {"role": "assistant", "content": "Of course, take your time. Would it be helpful if I summarized the key benefits we discussed?"}
-            ]
-        })
-
-        return examples[:5]  # Limit to 5 examples to keep the prompt focused
-
-    def _format_output(self, analysis: Dict) -> str:
-        """Format the analysis output in a readable way"""
-        formatted = "# Sales Analysis Summary\n\n"
-        
-        # Sales Techniques
-        formatted += "## 🎯 Sales Techniques\n\n"
-        for technique in analysis["structured_data"].get("sales_techniques", []):
-            formatted += f"### {technique['name']}\n"
-            formatted += f"- **Description**: {technique['description']}\n"
-            if technique.get("examples"):
-                formatted += f"- **Example**: _{technique['examples'][0]}_\n"
-            if technique.get("context"):
-                formatted += f"- **Best Used**: {technique['context']}\n"
-            formatted += "\n"
-
-        # Communication Strategies
-        formatted += "## 🗣️ Communication Strategies\n\n"
-        for strategy in analysis["structured_data"].get("communication_strategies", []):
-            formatted += f"### {strategy['type']}\n"
-            formatted += f"- **Description**: {strategy['description']}\n"
-            if strategy.get("application"):
-                formatted += f"- **Application**: {strategy['application']}\n"
-            formatted += "\n"
-
-        # Objection Handling
-        formatted += "## 🛡️ Objection Handling\n\n"
-        for objection in analysis["structured_data"].get("objection_handling", []):
-            formatted += f"### When Customer Says: \"{objection['objection_type']}\"\n"
-            formatted += f"- **Recommended Response**: {objection['recommended_response']}\n"
-            if objection.get("examples"):
-                formatted += f"- **Example**: _{objection['examples'][0]}_\n"
-            formatted += "\n"
-
-        # Closing Techniques
-        formatted += "## 🎯 Closing Techniques\n\n"
-        for technique in analysis["structured_data"].get("closing_techniques", []):
-            formatted += f"### {technique['name']}\n"
-            formatted += f"- **How it Works**: {technique['description']}\n"
-            if technique.get("effectiveness"):
-                formatted += f"- **Most Effective**: {technique['effectiveness']}\n"
-            formatted += "\n"
-
-        # Generate and add AI Voice Agent Prompt
-        prompt_data = self._generate_prompt(analysis)
-        formatted += "## 🤖 AI Voice Agent Configuration\n\n"
-        formatted += "### System Prompt\n"
-        formatted += f"```\n{prompt_data['system_prompt']}\n```\n\n"
-        
-        formatted += "### Example Conversations\n"
-        for example in prompt_data['example_conversations']:
-            formatted += f"\n#### {example['title']}\n"
-            for msg in example['conversation']:
-                role_emoji = "👤" if msg['role'] == "user" else "🤖"
-                formatted += f"{role_emoji} **{msg['role'].title()}**: {msg['content']}\n"
-            formatted += "\n"
-
-        return formatted
+            logger.error(f"Error storing analysis response: {str(e)}", exc_info=True)
+            raise
 
     def run(
         self,
-        video_id: str,
+        video_id: str = None,
+        collection_id: str = None,
         analysis_type: str = "full",
-        output_format: str = "both",
+        bypass_reasoning: bool = True,
         *args,
         **kwargs,
     ) -> AgentResponse:
         """Run the sales prompt extractor agent."""
         try:
-            # Create initial text content for frontend updates
-            text_content = TextContent(
+            # Initialize content holder
+            text_content = SalesAnalysisContent(
                 agent_name=self.agent_name,
                 status=MsgStatus.progress,
-                status_message="Analyzing sales content...",
+                status_message="Starting analysis..."
             )
             self.output_message.content.append(text_content)
-            self.output_message.push_update()
-
-            # Get transcript and analyze content
-            transcript = self._get_transcript(video_id)
-            analysis = self._analyze_content(transcript, analysis_type)
             
-            # Generate AI voice agent prompt
-            prompt_data = self._generate_prompt(analysis)
+            # Get transcript
+            self.output_message.actions.append("Getting transcript...")
+            self.output_message.push_update(progress=0.1)
             
-            # Prepare structured data without transcript
-            structured_data = {
-                "sales_techniques": analysis["structured_data"]["sales_techniques"],
-                "communication_strategies": analysis["structured_data"]["communication_strategies"],
-                "objection_handling": analysis["structured_data"]["objection_handling"],
-                "closing_techniques": analysis["structured_data"]["closing_techniques"]
-            }
+            if not collection_id:
+                raise Exception("collection_id is required to get transcript")
             
-            # Format output based on preference
-            if output_format == "structured":
-                output = {
-                    "analysis": structured_data,
-                    "voice_agent": prompt_data
-                }
-                formatted_output = self._format_output({"structured_data": structured_data})
-            elif output_format == "text":
-                formatted_output = self._format_output({"structured_data": structured_data})
-                output = formatted_output
-            else:  # both
-                output = {
-                    "analysis": structured_data,
-                    "voice_agent": prompt_data,
-                    "formatted": self._format_output({"structured_data": structured_data}),
-                    "timestamp": datetime.now().isoformat()
-                }
-                formatted_output = output["formatted"]
-
-            # Update frontend with results
-            text_content.text = formatted_output
-            text_content.status = MsgStatus.success
-            text_content.status_message = "Sales analysis completed successfully"
-            self.output_message.publish()
-                
-            return AgentResponse(
-                status=AgentStatus.SUCCESS,
-                message="Sales analysis completed successfully",
-                data=output
+            transcript_response = self.transcription_agent.run(
+                collection_id=collection_id,
+                video_id=video_id
             )
             
+            if transcript_response.status != AgentStatus.SUCCESS:
+                raise Exception(f"Failed to get transcript: {transcript_response.message}")
+            
+            transcript = transcript_response.data.get("transcript")
+            if not transcript:
+                raise Exception("No transcript found in response")
+            
+            self.output_message.actions.append("Analyzing sales content...")
+            self.output_message.push_update(progress=0.3)
+            
+            # Get analysis with proper error handling and retries
+            retry_count = 0
+            last_error = None
+            
+            while retry_count < self.max_retries:
+                try:
+                    # Format messages for analysis
+                    messages = self._get_analysis_prompt(transcript, analysis_type)
+                    
+                    logger.info("=== Starting Anthropic API Request ===")
+                    logger.info("Sending analysis request...")
+                    self.output_message.actions.append("Processing analysis...")
+                    self.output_message.push_update(progress=0.4)
+                    
+                    # Make API call directly to Anthropic
+                    response = self.analysis_llm.chat_completions(
+                        messages=messages,
+                        temperature=0.7,
+                        max_tokens=8192
+                    )
+                    
+                    if not response or not response.content:
+                        raise Exception("No response received from Anthropic API")
+                    
+                    # Store the response immediately
+                    self._store_analysis_response(
+                        content=response.content,
+                        status="success",
+                        metadata={
+                            "attempt": retry_count + 1,
+                            "timestamp": datetime.now().isoformat(),
+                            "bypass_reasoning": bypass_reasoning
+                        }
+                    )
+                    
+                    # Process and return the response
+                    return AgentResponse(
+                        status=AgentStatus.SUCCESS,
+                        message="Analysis completed successfully",
+                        data={"analysis": response.content}
+                    )
+                    
+                except Exception as e:
+                    last_error = str(e)
+                    logger.error(f"Attempt {retry_count + 1} failed: {last_error}", exc_info=True)
+                    retry_count += 1
+                    if retry_count < self.max_retries:
+                        time.sleep(self.retry_delay * retry_count)  # Exponential backoff
+                    
+                    # Store failed attempt
+                    self._store_analysis_response(
+                        content="",
+                        status="error",
+                        metadata={
+                            "error": last_error,
+                            "attempt": retry_count,
+                            "timestamp": datetime.now().isoformat(),
+                            "bypass_reasoning": bypass_reasoning
+                        }
+                    )
+            
+            # If we get here, all retries failed
+            raise Exception(f"Failed after {self.max_retries} attempts. Last error: {last_error}")
+            
         except Exception as e:
-            logger.error(f"Error in sales analysis: {str(e)}")
-            if 'text_content' in locals():
-                text_content.status = MsgStatus.error
-                text_content.status_message = f"Error in sales analysis: {str(e)}"
-                self.output_message.publish()
+            logger.error(f"Error in sales prompt extractor: {str(e)}", exc_info=True)
             return AgentResponse(
                 status=AgentStatus.ERROR,
-                message=f"Error in sales analysis: {str(e)}",
-                data={
-                    "error": str(e),
-                    "error_type": type(e).__name__,
-                    "stage": "sales_analysis"
-                }
-            ) 
+                message=str(e),
+                data=None
+            )
+
+    def _format_output(self, content: str) -> str:
+        """Format the analysis output for better readability."""
+        try:
+            # Clean and normalize the content
+            content = content.strip()
+            content = re.sub(r'\n{3,}', '\n\n', content)  # Remove excessive newlines
+            content = _clean_text_for_logging(content)
+            return content
+        except Exception as e:
+            logger.error(f"Error formatting output: {str(e)}", exc_info=True)
+            return content
+
+    def _get_system_prompt(self, analysis_data: dict) -> str:
+        """Generate system prompt for the AI voice agent."""
+        prompt = """You are an AI sales agent trained to engage in natural, empathetic, and effective sales conversations. Your responses should be guided by the following framework:
+
+ROLE AND PERSONA:
+- You are a professional, friendly, and knowledgeable sales consultant
+- You focus on understanding customer needs before proposing solutions
+- You maintain a balanced approach between being helpful and goal-oriented
+
+COMMUNICATION STYLE:
+- Use clear, concise, and professional language
+- Practice active listening and ask clarifying questions
+- Mirror the customer's communication style while maintaining professionalism
+- Show genuine interest in helping customers solve their problems
+
+KEY OBJECTIVES:
+1. Build trust and rapport with customers
+2. Understand customer needs through effective questioning
+3. Present relevant solutions based on customer requirements
+4. Address concerns and objections professionally
+5. Guide conversations toward positive outcomes
+
+ETHICAL GUIDELINES:
+1. Always be truthful and transparent
+2. Never pressure customers into decisions
+3. Respect customer privacy and confidentiality
+4. Only make promises you can keep
+5. Prioritize customer needs over immediate sales
+
+AVAILABLE TECHNIQUES AND STRATEGIES:
+
+Sales Techniques:
+{techniques}
+
+Communication Strategies:
+{strategies}
+
+Objection Handling:
+{objections}
+
+Voice Agent Guidelines:
+{guidelines}
+
+IMPLEMENTATION GUIDELINES:
+1. Start conversations by building rapport and understanding needs
+2. Use appropriate sales techniques based on the conversation context
+3. Address objections using the provided strategies
+4. Apply closing techniques naturally when customer shows interest
+5. Maintain a helpful and consultative approach throughout
+
+Remember to stay natural and conversational while implementing these guidelines."""
+
+        # Format techniques section
+        techniques = "\n".join([
+            f"- {t.get('description', '')}"
+            for t in analysis_data.get("sales_techniques", [])
+        ])
+        
+        # Format strategies section
+        strategies = "\n".join([
+            f"- {s.get('type', 'Strategy')}: {s.get('description', '')}"
+            for s in analysis_data.get("communication_strategies", [])
+        ])
+        
+        # Format objections section
+        objections = "\n".join([
+            f"- {o.get('description', '')}"
+            for o in analysis_data.get("objection_handling", [])
+        ])
+        
+        # Format guidelines section
+        guidelines = "\n".join([
+            f"- {g.get('description', '')}"
+            for g in analysis_data.get("voice_agent_guidelines", [])
+        ])
+        
+        return prompt.format(
+            techniques=techniques or "No specific techniques provided",
+            strategies=strategies or "No specific strategies provided",
+            objections=objections or "No specific objection handling provided",
+            guidelines=guidelines or "No specific guidelines provided"
+        )
+
+    def _get_fallback_conversations(self) -> list:
+        """Return default fallback conversations if generation fails."""
+        return [
+            {
+                "title": "Basic Product Inquiry",
+                "scenario": "Customer inquiring about product features and pricing",
+                "techniques_used": ["Active Listening", "Feature-Benefit Selling", "Consultative Approach"],
+                "conversation": [
+                    {
+                        "role": "user",
+                        "content": "I'm interested in learning more about your product."
+                    },
+                    {
+                        "role": "assistant",
+                        "content": "I'd be happy to help you learn more. To ensure I provide the most relevant information, could you tell me what specific needs or challenges you're looking to address?"
+                    },
+                    {
+                        "role": "user",
+                        "content": "Well, I'm mainly concerned about the cost and whether it's worth the investment."
+                    },
+                    {
+                        "role": "assistant",
+                        "content": "I understand cost is an important factor. Let's look at how our solution can provide value for your specific situation. Could you share more about your current process and what improvements you're hoping to achieve?"
+                    }
+                ]
+            }
+        ]

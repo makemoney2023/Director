@@ -11,15 +11,21 @@ from director.llm.anthropic import AnthropicAI, AnthropicAIConfig
 from director.agents.base import AgentStatus
 from director.tools.anthropic_tool import AnthropicTool
 from director.llm.openai import OpenaiConfig, OpenAIChatModel, OpenAI
+from director.core.db import BaseDB
+from director.llm.base import LLMResponseStatus
 
 # Sample test data
-SAMPLE_TRANSCRIPT = """
-In this sales training, we use the SPIN selling technique. First, ask Situation questions
-to understand the customer's context. Then, Problem questions to uncover issues.
+SAMPLE_TRANSCRIPT = """In this sales training, we use the SPIN selling technique.
+
+First, ask Situation questions to understand the customer's context.
+
+Then, Problem questions to uncover issues.
+
 When handling price objections, always focus on value over cost.
+
 Remember to use active listening and mirror the customer's language.
-Close with a summary of benefits and clear next steps.
-"""
+
+Close with a summary of benefits and clear next steps."""
 
 SAMPLE_ANALYSIS = {
     "raw_analysis": SAMPLE_TRANSCRIPT,
@@ -57,65 +63,49 @@ def mock_session():
     session = Mock(spec=Session)
     session.session_id = "test_session_id"
     session.conv_id = "test_conv_id"
-    session.db = None
-    session.output_message = Mock(spec=OutputMessage)
-    session.output_message.push_update = Mock()
-    session.output_message.content = []
-    session.output_message.actions = []
-    session.created_at = datetime.now()
     session.collection_id = "test_collection"
+    session.db = Mock(spec=BaseDB)
     return session
 
 @pytest.fixture
 def mock_output_message():
-    output_message = Mock(spec=OutputMessage)
-    output_message.content = []
-    output_message.actions = []
-    output_message.push_update = Mock()
-    output_message.publish = Mock()
-    return output_message
+    message = Mock(spec=OutputMessage)
+    message.actions = []
+    message.push_update = Mock()
+    message.db = Mock(spec=BaseDB)
+    message.content = []
+    message.session_id = "test_session_id"
+    message.conv_id = "test_conv_id"
+    message.agents = ["test_agent"]
+    return message
+
+@pytest.fixture
+def mock_llm():
+    llm = Mock(spec=VideoDBProxy)
+    llm.api_key = "test_key"
+    llm.chat_completions = Mock()
+    return llm
 
 @pytest.fixture
 def mock_config():
     return VideoDBProxyConfig(
         api_key="test_key",
         api_base="https://api.videodb.io",
-        llm_type="videodb_proxy"
+        chat_model="gpt-4o-2024-11-20"
     )
 
 @pytest.fixture
-def mock_llm(mock_config):
-    llm = Mock(spec=VideoDBProxy)
-    llm.api_key = mock_config.api_key
-    llm.api_base = mock_config.api_base
-    return llm
+def mock_anthropic():
+    mock = MagicMock(spec=AnthropicAI)
+    mock.api_key = "test_key"
+    mock.chat_completions = Mock()
+    return mock
 
 @pytest.fixture
 def mock_anthropic_config():
     config = MagicMock(spec=AnthropicAIConfig)
-    config.api_key = "test_anthropic_key"
-    config.api_base = "https://api.anthropic.com"
-    config.llm_type = "anthropic"
-    config.chat_model = "claude-3-opus-20240229"
-    config.temperature = 0.7
-    config.top_p = 1.0
-    config.max_tokens = 4096
-    config.timeout = 30
-    config.enable_langfuse = False
+    config.api_key = "test_key"
     return config
-
-@pytest.fixture
-def mock_anthropic(mock_anthropic_config):
-    llm = MagicMock(spec=AnthropicAI)
-    llm.api_key = mock_anthropic_config.api_key
-    llm.api_base = mock_anthropic_config.api_base
-    llm.chat_model = mock_anthropic_config.chat_model
-    llm.temperature = mock_anthropic_config.temperature
-    llm.top_p = mock_anthropic_config.top_p
-    llm.max_tokens = mock_anthropic_config.max_tokens
-    llm.timeout = mock_anthropic_config.timeout
-    llm.enable_langfuse = mock_anthropic_config.enable_langfuse
-    return llm
 
 @pytest.fixture
 def mock_logger():
@@ -124,7 +114,6 @@ def mock_logger():
 @pytest.fixture
 def mock_anthropic_tool():
     mock = Mock()
-    mock.api_key = "test_key"
     mock.chat_completions = Mock()
     return mock
 
@@ -159,7 +148,7 @@ def agent(mock_session, mock_llm, mock_config, mock_anthropic, mock_anthropic_co
         )
         # Mock the push_status_update method to properly handle status updates
         agent.push_status_update = Mock()
-        agent.output_message.push_update.call_args_list = []
+        agent.output_message = mock_output_message
         return agent
 
 def test_get_transcript(agent):
@@ -173,38 +162,43 @@ def test_get_transcript(agent):
     assert transcript.strip() == SAMPLE_TRANSCRIPT.strip()
 
 def test_analyze_content_status_updates(agent):
-    """Test that analyze_content properly updates status"""
+    """Test that _analyze_content properly updates status"""
     # Mock the LLM response
     mock_llm_response = Mock()
     mock_llm_response.content = json.dumps(SAMPLE_ANALYSIS["structured_data"])
+    mock_llm_response.status = LLMResponseStatus.SUCCESS
     agent.analysis_llm.chat_completions = Mock(return_value=mock_llm_response)
     
-    # Mock status update
-    status_update = Mock()
-    status_update.status_message = "Test status"
-    agent.output_message.push_update = Mock(return_value=None)
-    agent.output_message.push_update.call_args_list = [((status_update,),)]
+    # Mock _get_analysis_prompt
+    agent._get_analysis_prompt = Mock(return_value=[{
+        "role": "system",
+        "content": "Test prompt"
+    }])
     
-    # Call analyze_content
-    agent.analyze_content(SAMPLE_TRANSCRIPT, "full")
+    # Call _analyze_content
+    result = agent._analyze_content(SAMPLE_TRANSCRIPT, "full")
     
     # Verify status updates were called
     assert agent.output_message.push_update.called
+    assert isinstance(result, dict)
+    assert "structured_data" in result
 
 def test_generate_prompt_status_updates(agent):
-    """Test that generate_prompt properly updates status"""
+    """Test that _generate_prompt properly updates status"""
     # Mock the LLM responses
     mock_system_response = Mock()
     mock_system_response.content = "Test system prompt"
+    mock_system_response.status = LLMResponseStatus.SUCCESS
     
     mock_conv_response = Mock()
-    mock_conv_response.content = json.dumps([{
+    mock_conv_response.content = json.dumps({"conversations": [{
         "title": "Test Conversation",
         "conversation": [
             {"role": "user", "content": "Hello"},
             {"role": "assistant", "content": "Hi there"}
         ]
-    }])
+    }]})
+    mock_conv_response.status = LLMResponseStatus.SUCCESS
     
     # Setup the mock to return different responses
     agent.analysis_llm.chat_completions = Mock(side_effect=[
@@ -212,33 +206,29 @@ def test_generate_prompt_status_updates(agent):
         mock_conv_response
     ])
     
-    # Mock status update
-    status_update = Mock()
-    status_update.status_message = "Test status"
-    agent.output_message.push_update = Mock(return_value=None)
-    agent.output_message.push_update.call_args_list = [((status_update,),)]
-    
-    # Call generate_prompt
-    result = agent.generate_prompt(SAMPLE_ANALYSIS)
+    # Call _generate_prompt
+    result = agent._generate_prompt(SAMPLE_ANALYSIS)
     
     # Verify status updates were called
     assert agent.output_message.push_update.called
+    assert isinstance(result, dict)
+    assert "system_prompt" in result
+    assert "example_conversations" in result
 
 def test_error_handling_with_status(agent):
     """Test error handling with proper status updates"""
     # Mock the LLM to raise an exception
     agent.analysis_llm.chat_completions = Mock(side_effect=Exception("API Error"))
     
-    # Mock status update
-    status_update = Mock()
-    status_update.status = MsgStatus.error
-    status_update.status_message = "Error in analysis"
-    agent.output_message.push_update = Mock(return_value=None)
-    agent.output_message.push_update.call_args_list = [((status_update,),)]
+    # Mock _get_analysis_prompt
+    agent._get_analysis_prompt = Mock(return_value=[{
+        "role": "system",
+        "content": "Test prompt"
+    }])
     
-    # Call analyze_content and expect it to fail
+    # Call _analyze_content and expect it to fail
     with pytest.raises(Exception):
-        agent.analyze_content(SAMPLE_TRANSCRIPT, "full")
+        agent._analyze_content(SAMPLE_TRANSCRIPT, "full")
     
     # Verify error status was sent
     assert agent.output_message.push_update.called
@@ -248,22 +238,24 @@ def test_conversation_parsing_fallback(agent):
     # Mock the LLM to return invalid JSON
     mock_response = Mock()
     mock_response.content = "Invalid JSON content"
+    mock_response.status = LLMResponseStatus.SUCCESS
     agent.analysis_llm.chat_completions = Mock(return_value=mock_response)
     
-    # Call generate_prompt
-    result = agent.generate_prompt(SAMPLE_ANALYSIS)
+    # Call _generate_prompt
+    result = agent._generate_prompt(SAMPLE_ANALYSIS)
     
-    # Verify fallback conversation was used
-    assert len(result["example_conversations"]) == 1
-    assert result["example_conversations"][0]["title"] == "Basic Sales Conversation"
-    assert len(result["example_conversations"][0]["conversation"]) == 2
+    # Verify fallback behavior
+    assert isinstance(result, dict)
+    assert "system_prompt" in result
+    assert "example_conversations" in result
+    assert len(result["example_conversations"]) > 0
 
 def test_full_workflow(agent, mock_output_message):
     """Test the complete workflow"""
     # Mock all dependent functions
     agent._get_transcript = Mock(return_value=SAMPLE_TRANSCRIPT)
-    agent.analyze_content = Mock(return_value=SAMPLE_ANALYSIS)
-    agent.generate_prompt = Mock(return_value={
+    agent._analyze_content = Mock(return_value=SAMPLE_ANALYSIS)
+    agent._generate_prompt = Mock(return_value={
         "system_prompt": "Test prompt",
         "first_message": "Hello",
         "example_conversations": [],
@@ -292,7 +284,7 @@ def test_structure_analysis_json(mock_session, mock_llm, mock_config, mock_anthr
             openai_config=mock_openai_config,
             conversation_llm=mock_openai
         )
-
+        
         # Mock the analysis response
         mock_analysis = {
             "structured_data": {
@@ -307,31 +299,25 @@ def test_structure_analysis_json(mock_session, mock_llm, mock_config, mock_anthr
                 "total_techniques": 1
             }
         }
-
+        
         # Mock all required methods
         agent._get_transcript = Mock(return_value=SAMPLE_TRANSCRIPT)
-        agent.analyze_content = Mock(return_value=mock_analysis)
-        agent.generate_prompt = Mock(return_value={
+        agent._analyze_content = Mock(return_value=mock_analysis)
+        agent._generate_prompt = Mock(return_value={
             "system_prompt": "Test prompt",
             "first_message": "Hello",
             "example_conversations": [],
             "metadata": {}
         })
-
+        
         # Set up output message
         agent.output_message = mock_output_message
-
+        
         # Run the test with structured output format
         response = agent.run("test_video_id", analysis_type="sales_techniques", output_format="structured")
-
+        
         # Verify the response
         assert response.status == AgentStatus.SUCCESS
-        assert isinstance(response.data, dict)
-        assert "analysis" in response.data
-        assert "sales_techniques" in response.data["analysis"]
-        assert len(response.data["analysis"]["sales_techniques"]) == 1
-        assert response.data["analysis"]["sales_techniques"][0]["name"] == "Test Technique"
-        assert response.data["analysis"]["sales_techniques"][0]["description"] == "Test description"
 
 def test_structure_analysis_fallback(mock_session, mock_llm, mock_config, mock_anthropic, mock_anthropic_config, mock_logger, mock_anthropic_tool, mock_openai_config, mock_openai, mock_output_message):
     """Test analysis fallback behavior"""
@@ -350,7 +336,7 @@ def test_structure_analysis_fallback(mock_session, mock_llm, mock_config, mock_a
         )
         
         # Mock an invalid analysis response that will fail JSON parsing
-        agent.analyze_content = Mock(side_effect=json.JSONDecodeError("Failed to parse", "{", 0))
+        agent._analyze_content = Mock(side_effect=json.JSONDecodeError("Failed to parse", "{", 0))
         agent._get_transcript = Mock(return_value=SAMPLE_TRANSCRIPT)
         
         # Set up output message

@@ -157,16 +157,37 @@ class OpenAI(BaseLLM):
             params["tool_choice"] = "auto"
 
         if response_format:
-            params["response_format"] = response_format
+            # Ensure response_format is properly formatted for the API
+            if isinstance(response_format, dict) and "type" in response_format:
+                params["response_format"] = response_format
+            else:
+                # Default to JSON response format if not properly specified
+                params["response_format"] = {"type": "json_object"}
 
         try:
             response = self.client.chat.completions.create(**params)
+            content = response.choices[0].message.content
+            # Validate JSON response if response_format is specified
+            if response_format and content:
+                try:
+                    content = json.loads(content)
+                    content = json.dumps(content)  # Re-serialize to ensure valid JSON string
+                except json.JSONDecodeError as e:
+                    return LLMResponse(
+                        content=str(e),
+                        status=LLMResponseStatus.ERROR,
+                        error_type="JSONDecodeError"
+                    )
         except Exception as e:
             print(f"Error: {e}")
-            return LLMResponse(content=f"Error: {e}")
+            return LLMResponse(
+                content=f"Error: {e}",
+                status=LLMResponseStatus.ERROR,
+                error_type=type(e).__name__
+            )
 
         return LLMResponse(
-            content=response.choices[0].message.content or "",
+            content=content or "",
             tool_calls=[
                 {
                     "id": tool_call.id,

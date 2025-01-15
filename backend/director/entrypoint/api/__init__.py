@@ -42,7 +42,7 @@ def create_app(app_config: object):
         cors_allowed_origins="*",
         logger=True,
         engineio_logger=True,
-        reconnection=False if app.config["DEBUG"] else True
+        reconnection=True
     )
     app.socketio = socketio
 

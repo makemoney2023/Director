@@ -195,28 +195,36 @@ class OutputMessage(BaseMessage):
         self.content.append(content)
         self.push_update()
 
-    def update_status(self, status: MsgStatus):
-        """Update the status of the message and publish the message to the socket. for loading state."""
+    def update_status(self, status: MsgStatus, message: Optional[str] = None):
+        """Update the status of the message and store in database."""
         self.status = status
-        self._publish()
+        if message:
+            for content in self.content:
+                if hasattr(content, 'status_message'):
+                    content.status_message = message
+        self._store_in_db()
 
-    def push_update(self):
-        """Publish the message to the socket."""
-        try:
-            emit("chat", self.model_dump(), namespace="/chat")
-        except Exception as e:
-            print(f"Error in emitting message: {str(e)}")
+    def push_update(self, progress: Optional[float] = None):
+        """Store the message in the database and update progress."""
+        message_data = self.model_dump()
+        if progress is not None:
+            message_data['metadata'] = {
+                **(message_data.get('metadata') or {}),
+                'progress': progress
+            }
+        self._store_in_db()
 
     def publish(self):
-        """Store the message in the database. for conversation history and publish the message to the socket."""
-        self._publish()
+        """Store the message in the database."""
+        self._store_in_db()
 
-    def _publish(self):
+    def _store_in_db(self):
+        """Store the message in the database."""
         try:
-            emit("chat", self.model_dump(), namespace="/chat")
+            message_data = self.model_dump()
+            self.db.add_or_update_msg_to_conv(**message_data)
         except Exception as e:
-            print(f"Error in emitting message: {str(e)}")
-        self.db.add_or_update_msg_to_conv(**self.model_dump())
+            logger.error(f"Error storing message in database: {str(e)}")
 
 
 class ContextMessage(BaseModel):

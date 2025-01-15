@@ -1,4 +1,7 @@
 from enum import Enum
+import time
+from tenacity import retry, stop_after_attempt, wait_exponential
+import logging
 
 from pydantic import Field, field_validator, FieldValidationInfo
 from pydantic_settings import SettingsConfigDict
@@ -9,6 +12,8 @@ from director.constants import (
     LLMType,
     EnvPrefix,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class AnthropicChatModel(str, Enum):
@@ -29,9 +34,9 @@ class AnthropicAIConfig(BaseLLMConfig):
     )
 
     llm_type: str = LLMType.ANTHROPIC
-    api_key: str = ""
+    api_key: str = Field(default="")
     api_base: str = ""
-    chat_model: str = Field(default=AnthropicChatModel.CLAUDE_3_5_SONNET)
+    chat_model: str = Field(default=AnthropicChatModel.CLAUDE_3_5_SONNET_LATEST)
 
     @field_validator("api_key")
     @classmethod
@@ -59,48 +64,35 @@ class AnthropicAI(BaseLLM):
         self.client = anthropic.Anthropic(api_key=self.api_key)
 
     def _format_messages(self, messages: list):
+        """Format messages for Anthropic's API, handling system messages correctly"""
         system = ""
         formatted_messages = []
-        if messages[0]["role"] == RoleTypes.system:
+        
+        # Extract system message if present
+        if messages and messages[0]["role"] == RoleTypes.system:
             system = messages[0]["content"]
             messages = messages[1:]
 
+        # Format remaining messages
         for message in messages:
             if message["role"] == RoleTypes.assistant and message.get("tool_calls"):
                 tool = message["tool_calls"][0]["tool"]
-                formatted_messages.append(
-                    {
-                        "role": message["role"],
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": message["content"],
-                            },
-                            {
-                                "id": message["tool_calls"][0]["id"],
-                                "type": message["tool_calls"][0]["type"],
-                                "name": tool["name"],
-                                "input": tool["arguments"],
-                            },
-                        ],
-                    }
-                )
-
+                formatted_messages.append({
+                    "role": "assistant",
+                    "content": message["content"]
+                })
             elif message["role"] == RoleTypes.tool:
-                formatted_messages.append(
-                    {
-                        "role": RoleTypes.user,
-                        "content": [
-                            {
-                                "type": "tool_result",
-                                "tool_use_id": message["tool_call_id"],
-                                "content": message["content"],
-                            }
-                        ],
-                    }
-                )
+                formatted_messages.append({
+                    "role": "user",
+                    "content": message["content"]
+                })
             else:
-                formatted_messages.append(message)
+                # Convert system role to assistant for non-first messages
+                role = "assistant" if message["role"] == RoleTypes.system else message["role"]
+                formatted_messages.append({
+                    "role": role,
+                    "content": message["content"]
+                })
 
         return system, formatted_messages
 
@@ -137,49 +129,43 @@ class AnthropicAI(BaseLLM):
             )
         return formatted_tools
 
-    def chat_completions(
-        self, messages: list, tools: list = [], stop=None, response_format=None
-    ):
-        """Get completions for chat.
-
-        tools docs: https://docs.anthropic.com/en/docs/build-with-claude/tool-use
-        """
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=4, max=10),
+        reraise=True
+    )
+    def chat_completions(self, messages: list, tools: list = [], stop=None, response_format=None):
+        """Get completions for chat."""
         system, messages = self._format_messages(messages)
+        
+        # Build parameters for Anthropic's API
         params = {
             "model": self.chat_model,
             "messages": messages,
-            "system": system,
-            "max_tokens": self.max_tokens,
+            "max_tokens": self.max_tokens
         }
+        
+        # Add system message if present
+        if system:
+            params["system"] = system
+            
+        # Add tools if present
         if tools:
             params["tools"] = self._format_tools(tools)
 
         try:
             response = self.client.messages.create(**params)
-        except Exception as e:
-            raise e
-            return LLMResponse(content=f"Error: {e}")
-
-        return LLMResponse(
-            content=response.content[0].text,
-            tool_calls=[
-                {
-                    "id": response.content[1].id,
-                    "tool": {
-                        "name": response.content[1].name,
-                        "arguments": response.content[1].input,
-                    },
-                    "type": response.content[1].type,
-                }
-            ]
-            if next(
-                (block for block in response.content if block.type == "tool_use"), None
+            # Add a small delay between requests to respect rate limits
+            time.sleep(0.5)
+            return LLMResponse(
+                content=response.content[0].text,
+                tool_calls=[],  # Handle tool calls if needed
+                send_tokens=response.usage.input_tokens,
+                recv_tokens=response.usage.output_tokens,
+                total_tokens=response.usage.input_tokens + response.usage.output_tokens,
+                finish_reason=response.stop_reason,
+                status=LLMResponseStatus.SUCCESS
             )
-            is not None
-            else [],
-            finish_reason=response.stop_reason,
-            send_tokens=response.usage.input_tokens,
-            recv_tokens=response.usage.output_tokens,
-            total_tokens=(response.usage.input_tokens + response.usage.output_tokens),
-            status=LLMResponseStatus.SUCCESS,
-        )
+        except Exception as e:
+            logger.error(f"Error in Anthropic API call: {str(e)}")
+            raise  # Let the retry decorator handle the retry logic

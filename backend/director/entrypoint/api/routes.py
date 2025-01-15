@@ -36,22 +36,44 @@ async def analyze_sales_video():
     analysis_type = data.get("analysis_type", "full")
     output_format = data.get("output_format", "both")
 
-    if not video_id:
-        return {"message": "Please provide a video_id."}, 400
-
-    chat_handler = ChatHandler(
-        db=load_db(os.getenv("SERVER_DB_TYPE", app.config["DB_TYPE"]))
-    )
-    
     # Create a new session for this analysis
     session = Session()
     
-    # Initialize the agent
+    # Initialize the agent directly
     agent = SalesPromptExtractorAgent(session)
+
+    # If no video_id, return initial response
+    if not video_id:
+        result = await agent.run(video_id=None)
+        return {
+            "status": result.status,
+            "message": result.message,
+            "data": result.data,
+            "session_id": session.id
+        }
+
+    # Validate parameters
+    valid_analysis_types = ["sales_techniques", "communication", "full"]
+    valid_output_formats = ["structured", "text", "both"]
+
+    if analysis_type not in valid_analysis_types:
+        return {
+            "message": f"Invalid analysis_type. Must be one of: {', '.join(valid_analysis_types)}"
+        }, 400
+
+    if output_format not in valid_output_formats:
+        return {
+            "message": f"Invalid output_format. Must be one of: {', '.join(valid_output_formats)}"
+        }, 400
+
+    # Run the analysis and return the raw agent response
+    result = await agent.run(
+        video_id=video_id, 
+        analysis_type=analysis_type, 
+        output_format=output_format
+    )
     
-    # Run the analysis
-    result = await agent.run(video_id=video_id, analysis_type=analysis_type, output_format=output_format)
-    
+    # Return the raw agent response without reasoning engine processing
     return {
         "status": result.status,
         "message": result.message,

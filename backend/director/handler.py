@@ -107,18 +107,37 @@ class ChatHandler:
             agents = [agent(session=session) for agent in self.agents]
             agents_mapping = {agent.name: agent for agent in agents}
 
-            res_eng = ReasoningEngine(input_message=input_message, session=session)
-            if input_message.agents:
-                for agent_name in input_message.agents:
-                    res_eng.register_agents([agents_mapping[agent_name]])
+            # Check if we should bypass reasoning engine
+            if input_message.agents and len(input_message.agents) == 1 and input_message.agents[0] == "sales_prompt_extractor":
+                # Direct agent call for sales_prompt_extractor
+                agent = agents_mapping["sales_prompt_extractor"]
+                response = agent.run(
+                    video_id=session.video_id,
+                    collection_id=session.collection_id,
+                    bypass_reasoning=True
+                )
+                session.output_message.content.append(response.data.get("analysis", ""))
+                session.output_message.status = MsgStatus.success
+                session.output_message.publish()
             else:
-                res_eng.register_agents(agents)
-
-            res_eng.run()
+                # Use reasoning engine for all other cases
+                res_eng = ReasoningEngine(input_message=input_message, session=session)
+                if input_message.agents:
+                    for agent_name in input_message.agents:
+                        res_eng.register_agents([agents_mapping[agent_name]])
+                else:
+                    res_eng.register_agents(agents)
+                res_eng.run()
+            
+            # Return successful response
+            return session.output_message.model_dump()
 
         except Exception as e:
             session.output_message.update_status(MsgStatus.error)
             logger.exception(f"Error in chat handler: {e}")
+            
+            # Return error response
+            return session.output_message.model_dump()
 
 
 class SessionHandler:
