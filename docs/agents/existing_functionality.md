@@ -52,6 +52,17 @@ class WebSearchAgent(BaseAgent):
     - Web resource management
 ```
 
+### Sales Prompt Extractor Agent (`sales_prompt_extractor.py`)
+```python
+class SalesPromptExtractorAgent(BaseAgent):
+    """Sales conversation analysis and prompt generation"""
+    capabilities:
+    - Analyze sales conversations using Anthropic AI
+    - Extract structured data using OpenAI
+    - Generate voice agent prompts
+    - Store analysis results and prompts
+```
+
 ## Core Infrastructure
 
 ### Base Agent (`base.py`)
@@ -81,6 +92,7 @@ class Session:
 - VideoContent: Video processing results
 - AudioContent: Audio processing outputs
 - SearchResultContent: Search operation results
+- SalesAnalysisContent: Sales analysis and prompt data
 
 ## Integration Points
 
@@ -156,3 +168,81 @@ class Session:
 - Content type expansion
 - Service integration
 - State management hooks 
+
+## Data Structures
+
+### SalesAnalysisContent
+```json
+{
+    "agent_name": "sales_prompt_extractor",
+    "status": "success|error|progress",
+    "status_message": "Status description",
+    "text": "Formatted analysis text",
+    "analysis_data": {
+        "sales_techniques": [
+            {"name": "technique name", "description": "detailed description"}
+        ],
+        "communication_strategies": [
+            {"type": "strategy type", "description": "detailed description"}
+        ],
+        "objection_handling": [
+            {"name": "approach name", "description": "detailed description"}
+        ],
+        "voice_agent_guidelines": [
+            {"name": "guideline name", "description": "detailed description"}
+        ]
+    },
+    "anthropic_response": {
+        "content": "Raw analysis text",
+        "timestamp": "ISO timestamp",
+        "status": "success|error",
+        "metadata": {}
+    },
+    "voice_prompt": "Formatted voice agent prompt"
+}
+```
+
+### Voice Agent Prompt Structure
+```
+SALES CONVERSATION GUIDELINES
+
+CORE OBJECTIVES:
+1. Build genuine rapport with customers
+2. Understand customer needs and pain points
+3. Present relevant solutions effectively
+4. Address concerns and objections professionally
+5. Guide conversations toward positive outcomes
+
+ETHICAL GUIDELINES:
+1. Always be truthful and transparent
+2. Never pressure customers into decisions
+3. Respect customer privacy and confidentiality
+4. Only make promises you can keep
+5. Prioritize customer needs over immediate sales
+
+AVAILABLE TECHNIQUES AND STRATEGIES:
+- Sales Techniques (from analysis)
+- Communication Strategies (from analysis)
+- Objection Handling (from analysis)
+- Voice Agent Guidelines (from analysis)
+
+IMPLEMENTATION GUIDELINES:
+1. Start conversations by building rapport and understanding needs
+2. Use appropriate sales techniques based on the conversation context
+3. Address objections using the provided strategies
+4. Apply closing techniques naturally when customer shows interest
+5. Maintain a helpful and consultative approach throughout
+
+### Integration Points
+- Anthropic AI for conversation analysis
+- OpenAI for structured data extraction
+- Database storage for analysis results
+- Future integration with ElevenLabs for voice synthesis
+
+### Workflow
+1. Receive sales conversation transcript
+2. Generate analysis using Anthropic AI
+3. Extract structured data using OpenAI
+4. Generate voice agent prompt
+5. Store all data in database
+6. Return formatted response with all components 

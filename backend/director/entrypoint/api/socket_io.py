@@ -56,9 +56,9 @@ class ChatNamespace(Namespace):
         """Handle client connection"""
         logger.info("Client connected")
 
-    def on_disconnect(self):
+    def on_disconnect(self, sid=None, reason=None):
         """Handle client disconnection"""
-        logger.info("Client disconnected")
+        logger.info(f"Client disconnected. SID: {sid}, Reason: {reason}")
 
     def on_reconnect(self, data):
         """Handle client reconnection and recovery"""
