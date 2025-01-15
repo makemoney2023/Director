@@ -328,12 +328,49 @@ Format your response with clear sections and bullet points for easy reading."""
                             "bypass_reasoning": bypass_reasoning
                         }
                     )
+
+                    # Generate structured output using OpenAI
+                    self.output_message.actions.append("Generating structured output...")
+                    self.output_message.push_update(progress=0.6)
+                    
+                    structured_data = self._generate_structured_output(response.content)
+                    
+                    # Generate voice agent prompt
+                    self.output_message.actions.append("Generating voice agent prompt...")
+                    self.output_message.push_update(progress=0.8)
+                    
+                    voice_prompt = self._generate_voice_prompt(structured_data)
+                    
+                    # Format final response with markdown
+                    final_response = f"""
+{response.content}
+
+## Voice Agent Prompt
+```
+{voice_prompt}
+```
+
+## Structured Data
+```json
+{json.dumps(structured_data, indent=2)}
+```
+"""
+                    
+                    # Update the stored content with all data
+                    text_content = self.output_message.content[-1]
+                    text_content.text = final_response
+                    text_content.analysis_data = structured_data
+                    self.output_message.push_update()
                     
                     # Process and return the response
                     return AgentResponse(
                         status=AgentStatus.SUCCESS,
                         message="Analysis completed successfully",
-                        data={"analysis": response.content}
+                        data={
+                            "analysis": response.content,
+                            "voice_prompt": voice_prompt,
+                            "structured_data": structured_data
+                        }
                     )
                     
                 except Exception as e:
@@ -488,3 +525,141 @@ Remember to stay natural and conversational while implementing these guidelines.
                 ]
             }
         ]
+
+    def _generate_structured_output(self, analysis_text: str) -> Dict:
+        """Convert Anthropic analysis into structured data using OpenAI"""
+        try:
+            prompt = f"""
+            Convert this sales conversation analysis into structured data. Extract key information into these categories:
+
+            1. Sales Techniques: List of techniques with descriptions
+            2. Communication Strategies: List of strategies with types and descriptions
+            3. Objection Handling: List of approaches with descriptions
+            4. Voice Agent Guidelines: List of specific guidelines with descriptions
+
+            Analysis text:
+            {analysis_text}
+
+            Return ONLY a JSON object with this structure:
+            {{
+                "sales_techniques": [
+                    {{"name": "technique name", "description": "detailed description"}}
+                ],
+                "communication_strategies": [
+                    {{"type": "strategy type", "description": "detailed description"}}
+                ],
+                "objection_handling": [
+                    {{"name": "approach name", "description": "detailed description"}}
+                ],
+                "voice_agent_guidelines": [
+                    {{"name": "guideline name", "description": "detailed description"}}
+                ]
+            }}
+            """
+
+            # Use OpenAI for structured extraction
+            openai_config = OpenaiConfig(
+                model=OpenAIChatModel.gpt_4_1106_preview,
+                temperature=0.3,
+                response_format={"type": "json_object"}
+            )
+            openai = OpenAI(config=openai_config)
+            
+            response = openai.chat_completions(
+                messages=[{
+                    "role": "user",
+                    "content": prompt
+                }]
+            )
+            
+            if not response or not response.content:
+                raise Exception("No structured data received from OpenAI")
+                
+            return json.loads(response.content)
+            
+        except Exception as e:
+            logger.error(f"Error generating structured output: {str(e)}", exc_info=True)
+            # Return a basic structure if processing fails
+            return {
+                "sales_techniques": [],
+                "communication_strategies": [],
+                "objection_handling": [],
+                "voice_agent_guidelines": []
+            }
+
+    def _generate_voice_prompt(self, analysis_data: Dict) -> str:
+        """Generate a detailed voice agent prompt from the structured analysis data"""
+        try:
+            prompt = """SALES CONVERSATION GUIDELINES
+
+CORE OBJECTIVES:
+1. Build genuine rapport with customers
+2. Understand customer needs and pain points
+3. Present relevant solutions effectively
+4. Address concerns and objections professionally
+5. Guide conversations toward positive outcomes
+
+ETHICAL GUIDELINES:
+1. Always be truthful and transparent
+2. Never pressure customers into decisions
+3. Respect customer privacy and confidentiality
+4. Only make promises you can keep
+5. Prioritize customer needs over immediate sales
+
+AVAILABLE TECHNIQUES AND STRATEGIES:
+
+Sales Techniques:
+{techniques}
+
+Communication Strategies:
+{strategies}
+
+Objection Handling:
+{objections}
+
+Voice Agent Guidelines:
+{guidelines}
+
+IMPLEMENTATION GUIDELINES:
+1. Start conversations by building rapport and understanding needs
+2. Use appropriate sales techniques based on the conversation context
+3. Address objections using the provided strategies
+4. Apply closing techniques naturally when customer shows interest
+5. Maintain a helpful and consultative approach throughout
+
+Remember to stay natural and conversational while implementing these guidelines."""
+
+            # Format techniques section
+            techniques = "\n".join([
+                f"- {t.get('name', '')}: {t.get('description', '')}"
+                for t in analysis_data.get("sales_techniques", [])
+            ])
+            
+            # Format strategies section
+            strategies = "\n".join([
+                f"- {s.get('type', '')}: {s.get('description', '')}"
+                for s in analysis_data.get("communication_strategies", [])
+            ])
+            
+            # Format objections section
+            objections = "\n".join([
+                f"- {o.get('name', '')}: {o.get('description', '')}"
+                for o in analysis_data.get("objection_handling", [])
+            ])
+            
+            # Format guidelines section
+            guidelines = "\n".join([
+                f"- {g.get('name', '')}: {g.get('description', '')}"
+                for g in analysis_data.get("voice_agent_guidelines", [])
+            ])
+            
+            return prompt.format(
+                techniques=techniques or "No specific techniques provided",
+                strategies=strategies or "No specific strategies provided",
+                objections=objections or "No specific objection handling provided",
+                guidelines=guidelines or "No specific guidelines provided"
+            )
+            
+        except Exception as e:
+            logger.error(f"Error generating voice prompt: {str(e)}", exc_info=True)
+            return "Error generating voice prompt. Please check the logs for details."
