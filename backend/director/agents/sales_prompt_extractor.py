@@ -732,139 +732,153 @@ Remember to stay natural and conversational while implementing these guidelines.
     def _generate_voice_prompt(self, analysis_data: Dict) -> str:
         """Generate a detailed voice agent prompt from the structured analysis data"""
         try:
-            prompt = """SALES CONVERSATION GUIDELINES
+            prompt = """You are an advanced AI voice sales agent. Your primary goal is to engage in natural, persuasive sales conversations while maintaining authenticity and ethical standards.
 
-CORE OBJECTIVES:
-1. Build genuine rapport with customers
-2. Understand customer needs and pain points
-3. Present relevant solutions effectively
-4. Address concerns and objections professionally
-5. Guide conversations toward positive outcomes
+IDENTITY & PERSONA:
+- You are a professional, empathetic sales consultant named [Agent Name]
+- Your voice is warm, confident, and naturally engaging
+- You adapt your tone and pace to match the customer while staying professional
+- You demonstrate deep product knowledge and genuine desire to help
 
-SALES TECHNIQUES:
+CONVERSATION FRAMEWORK:
+1. OPENING (First 30 seconds):
+   - Greet warmly and introduce yourself clearly
+   - Build immediate rapport with genuine interest
+   - Set a positive, professional tone
+
+2. DISCOVERY (Next 2-3 minutes):
+   - Ask strategic questions to understand needs
+   - Listen actively and acknowledge responses
+   - Show empathy and understanding
+
+3. SOLUTION PRESENTATION (2-3 minutes):
+   - Present tailored solutions based on discovery
+   - Focus on value and benefits
+   - Use relevant examples and social proof
+
+4. HANDLING CONCERNS (As needed):
+   - Address objections professionally
+   - Maintain positive, solution-focused approach
+   - Use proven objection handling techniques
+
+5. CLOSING (When appropriate):
+   - Recognize buying signals
+   - Guide naturally to next steps
+   - Maintain relationship even if no immediate sale
+
+VOICE & LANGUAGE PATTERNS:
+
+Tonality Guidelines:
+- Maintain a warm, confident baseline tone
+- Vary pitch and pace for engagement
+- Use strategic pauses for emphasis
+- Express genuine enthusiasm appropriately
+
+Power Phrases & Techniques:
 {techniques}
 
-COMMUNICATION STRATEGIES:
+Communication Strategies:
 {strategies}
 
-OBJECTION HANDLING APPROACHES:
+Objection Response Templates:
 {objections}
 
-VOICE AGENT GUIDELINES:
+BEHAVIORAL GUIDELINES:
+
+Do's:
 {guidelines}
 
-KEY PHRASES:
+KEY CONVERSATION FLOWS:
 {key_phrases}
 
-IMPLEMENTATION NOTES:
-1. Start conversations by building rapport and understanding needs
-2. Use appropriate sales techniques based on the conversation context
-3. Address objections using the provided strategies
-4. Apply closing techniques naturally when customer shows interest
-5. Maintain a helpful and consultative approach throughout"""
+META INSTRUCTIONS:
+1. Always maintain natural conversation flow
+2. Adapt responses based on customer's emotional state
+3. Use silence strategically - allow customer to process
+4. Mirror customer's speech pattern while staying professional
+5. Break complex information into digestible segments
+6. Use verbal nods and acknowledgments appropriately
+7. Recover gracefully from any misunderstandings
+8. Stay focused on customer's needs and goals
 
-            # Extract techniques from raw analysis
-            raw_analysis = analysis_data.get("raw_analysis", "")
-            sections = raw_analysis.split("\n\n")
-            
-            # Process sales techniques
+ETHICAL FRAMEWORK:
+1. Always prioritize customer's best interests
+2. Never make false or exaggerated claims
+3. Respect privacy and confidentiality
+4. Be transparent about limitations
+5. Maintain professional boundaries
+
+Remember: Your goal is to be helpful and genuine, not pushy or manipulative. Build trust through authenticity and expertise."""
+
+            # Format sales techniques
             techniques_section = ""
-            for section in sections:
-                if "Sales Techniques Used" in section:
-                    lines = section.split("\n")
-                    current_technique = None
-                    for line in lines:
-                        if line.strip().startswith("•"):
-                            if current_technique:
-                                techniques_section += "\n\n"
-                            current_technique = line.strip("• ").upper()
-                            techniques_section += f"• {current_technique}\n"
-                        elif line.strip().startswith("- Quote:"):
-                            quote = line.split(":", 1)[1].strip().strip('"')
-                            techniques_section += f"  Example: \"{quote}\"\n"
-                        elif line.strip().startswith("- ") and "effective" in line.lower():
-                            effectiveness = line.strip("- ")
-                            techniques_section += f"  When to use: {effectiveness}\n"
+            for technique in analysis_data.get("sales_techniques", []):
+                techniques_section += f"• {technique.get('name', 'Technique').upper()}\n"
+                if technique.get('description'):
+                    techniques_section += f"  Description: {technique.get('description')}\n"
+                if technique.get('examples'):
+                    techniques_section += "  Examples:\n"
+                    for example in technique.get('examples'):
+                        techniques_section += f'    - "{example}"\n'
+                if technique.get('effectiveness'):
+                    techniques_section += f"  When to use: {technique.get('effectiveness')}\n"
+                techniques_section += "\n"
 
-            # Process communication strategies
+            # Format communication strategies
             strategies_section = ""
-            for section in sections:
-                if "Communication Strategies" in section:
-                    lines = section.split("\n")
-                    current_strategy = None
-                    for line in lines:
-                        if line.strip().startswith("•"):
-                            if current_strategy:
-                                strategies_section += "\n\n"
-                            current_strategy = line.strip("• ").upper()
-                            strategies_section += f"• {current_strategy}\n"
-                        elif line.strip().startswith("- Quote:"):
-                            quote = line.split(":", 1)[1].strip().strip('"')
-                            strategies_section += f"  Example: \"{quote}\"\n"
-                        elif line.strip().startswith("- ") and "effective" in line.lower():
-                            effectiveness = line.strip("- ")
-                            strategies_section += f"  Best practice: {effectiveness}\n"
+            for strategy in analysis_data.get("communication_strategies", []):
+                strategies_section += f"• {strategy.get('type', 'Strategy').upper()}\n"
+                if strategy.get('description'):
+                    strategies_section += f"  Description: {strategy.get('description')}\n"
+                if strategy.get('examples'):
+                    strategies_section += "  Examples:\n"
+                    for example in strategy.get('examples'):
+                        strategies_section += f'    - "{example}"\n'
+                if strategy.get('effectiveness'):
+                    strategies_section += f"  Best practice: {strategy.get('effectiveness')}\n"
+                strategies_section += "\n"
 
-            # Process objection handling
+            # Format objection handling
             objections_section = ""
-            for section in sections:
-                if "Objection Handling" in section:
-                    lines = section.split("\n")
-                    current_objection = None
-                    for line in lines:
-                        if line.strip().startswith("•"):
-                            if current_objection:
-                                objections_section += "\n\n"
-                            current_objection = line.strip("• ").upper()
-                            objections_section += f"• {current_objection}\n"
-                        elif line.strip().startswith("Response Strategy:"):
-                            objections_section += "  Strategy:\n"
-                        elif line.strip().startswith("- ") and not line.strip().startswith("- Quote:"):
-                            strategy = line.strip("- ")
-                            objections_section += f"    - {strategy}\n"
-                        elif line.strip().startswith("Quote:"):
-                            quote = line.split(":", 1)[1].strip().strip('"')
-                            objections_section += f"  Example: \"{quote}\"\n"
+            for objection in analysis_data.get("objection_handling", []):
+                objections_section += f"• WHEN CUSTOMER SAYS: {objection.get('name', 'Objection')}\n"
+                if objection.get('description'):
+                    objections_section += f"  Response: {objection.get('description')}\n"
+                if objection.get('examples'):
+                    objections_section += "  Examples:\n"
+                    for example in objection.get('examples'):
+                        objections_section += f'    - "{example}"\n'
+                if objection.get('effectiveness'):
+                    objections_section += f"  Note: {objection.get('effectiveness')}\n"
+                objections_section += "\n"
 
-            # Process guidelines
-            guidelines_section = ""
-            dos_section = "  DO:\n"
-            donts_section = "  DON'T:\n"
+            # Format voice agent guidelines
+            guidelines_section = "DO:\n"
+            donts_section = "\nDON'T:\n"
             
-            for section in sections:
-                if "Voice Agent Guidelines" in section:
-                    lines = section.split("\n")
-                    in_dos = False
-                    in_donts = False
-                    
-                    for line in lines:
-                        if "Do's:" in line:
-                            in_dos = True
-                            in_donts = False
-                            continue
-                        elif "Don'ts:" in line:
-                            in_dos = False
-                            in_donts = True
-                            continue
-                            
-                        if line.strip().startswith("•"):
-                            guideline = line.strip("• ")
-                            if in_dos:
-                                dos_section += f"    - {guideline}\n"
-                            elif in_donts:
-                                donts_section += f"    - {guideline}\n"
-                                
-            guidelines_section = dos_section + "\n" + donts_section
+            for guideline in analysis_data.get("voice_agent_guidelines", []):
+                if guideline.get('name') == 'Do':
+                    guidelines_section += f"• {guideline.get('description')}\n"
+                    if guideline.get('examples'):
+                        for example in guideline.get('examples'):
+                            guidelines_section += f'  - "{example}"\n'
+                elif guideline.get('name') == 'Don\'t':
+                    donts_section += f"• {guideline.get('description')}\n"
+                    if guideline.get('examples'):
+                        for example in guideline.get('examples'):
+                            donts_section += f'  - "{example}"\n'
 
-            # Process key phrases
+            guidelines_section += donts_section
+
+            # Extract key phrases from examples
             key_phrases_section = ""
-            for section in sections:
-                if "Key Phrases" in section:
-                    lines = section.split("\n")
-                    for line in lines:
-                        if line.strip().startswith("-"):
-                            phrase = line.strip("- ").strip('"')
-                            key_phrases_section += f"• \"{phrase}\"\n"
+            for section in [analysis_data.get("sales_techniques", []), 
+                           analysis_data.get("communication_strategies", []),
+                           analysis_data.get("voice_agent_guidelines", [])]:
+                for item in section:
+                    if item.get('examples'):
+                        for example in item.get('examples'):
+                            key_phrases_section += f"• \"{example}\"\n"
 
             # Format the final prompt
             formatted_prompt = prompt.format(
