@@ -593,7 +593,7 @@ Remember to stay natural and conversational while implementing these guidelines.
     def _generate_structured_output(self, analysis_text: str, voice_prompt: str) -> Dict:
         """Convert Anthropic analysis into structured data using OpenAI"""
         try:
-            # Initialize structured data
+            # Initialize structured data with more comprehensive structure
             structured_data = {
                 "summary": {
                     "overview": "",
@@ -606,11 +606,12 @@ Remember to stay natural and conversational while implementing these guidelines.
                 "objection_handling": [],
                 "voice_agent_guidelines": [],
                 "script_templates": [],
-                "key_phrases": []
+                "key_phrases": [],
+                "closing_techniques": []
             }
             
-            # Split analysis into sections
-            sections = analysis_text.split("\n\n")
+            # Split analysis into sections using markdown headers
+            sections = re.split(r'\n##? ', analysis_text)
             current_section = None
             current_item = None
             
@@ -618,158 +619,226 @@ Remember to stay natural and conversational while implementing these guidelines.
                 section = section.strip()
                 
                 # Process SUMMARY section
-                if section.startswith("SUMMARY:"):
+                if section.startswith("SUMMARY") or "Summary" in section:
                     current_section = "summary"
-                    structured_data["summary"]["overview"] = section.replace("SUMMARY:", "").strip()
+                    lines = section.split("\n")
+                    overview = []
+                    topics = []
+                    objectives = []
+                    approaches = []
+                    
+                    for line in lines[1:]:  # Skip header
+                        line = line.strip()
+                        if line.startswith("•") or line.startswith("-"):
+                            if "topic" in line.lower():
+                                topics.append(line.strip("•- "))
+                            elif "objective" in line.lower():
+                                objectives.append(line.strip("•- "))
+                            elif "approach" in line.lower():
+                                approaches.append(line.strip("•- "))
+                            else:
+                                overview.append(line.strip("•- "))
+                    
+                    structured_data["summary"].update({
+                        "overview": " ".join(overview),
+                        "topics": topics,
+                        "learning_objectives": objectives,
+                        "unique_approaches": approaches
+                    })
                     continue
                 
                 # Process Sales Techniques
-                elif "1. Sales Techniques Used" in section:
+                elif any(x in section for x in ["Sales Techniques", "SALES TECHNIQUES"]):
                     current_section = "sales_techniques"
+                    techniques = re.split(r'\n(?=[a-z]\)|\d\.)', section)
+                    
+                    for technique in techniques[1:]:  # Skip header
+                        lines = technique.split("\n")
+                        if not lines:
+                            continue
+                            
+                        name = re.sub(r'^[a-z]\)|^\d\.', '', lines[0]).strip()
+                        description = ""
+                        examples = []
+                        effectiveness = ""
+                        
+                        for line in lines[1:]:
+                            line = line.strip()
+                            if line.startswith("- Quote:") or line.startswith("Example:"):
+                                examples.append(line.split(":", 1)[1].strip().strip('"'))
+                            elif line.startswith("- Effect:") or line.startswith("Effectiveness:"):
+                                effectiveness = line.split(":", 1)[1].strip()
+                            elif line.startswith("-"):
+                                if not description:
+                                    description = line.strip("- ")
+                                else:
+                                    effectiveness += " " + line.strip("- ")
+                        
+                        structured_data["sales_techniques"].append({
+                            "name": name,
+                            "description": description,
+                            "examples": examples,
+                            "effectiveness": effectiveness
+                        })
                     continue
                 
                 # Process Communication Strategies
-                elif "2. Communication Strategies" in section:
+                elif any(x in section for x in ["Communication Strategies", "COMMUNICATION"]):
                     current_section = "communication_strategies"
+                    strategies = re.split(r'\n(?=[a-z]\)|\d\.)', section)
+                    
+                    for strategy in strategies[1:]:  # Skip header
+                        lines = strategy.split("\n")
+                        if not lines:
+                            continue
+                            
+                        strategy_type = re.sub(r'^[a-z]\)|^\d\.', '', lines[0]).strip()
+                        description = ""
+                        examples = []
+                        effectiveness = ""
+                        
+                        for line in lines[1:]:
+                            line = line.strip()
+                            if line.startswith("- Quote:") or line.startswith("Example:"):
+                                examples.append(line.split(":", 1)[1].strip().strip('"'))
+                            elif line.startswith("- Effect:") or line.startswith("Effectiveness:"):
+                                effectiveness = line.split(":", 1)[1].strip()
+                            elif line.startswith("-"):
+                                if not description:
+                                    description = line.strip("- ")
+                                else:
+                                    effectiveness += " " + line.strip("- ")
+                        
+                        structured_data["communication_strategies"].append({
+                            "type": strategy_type,
+                            "description": description,
+                            "examples": examples,
+                            "effectiveness": effectiveness
+                        })
                     continue
                 
                 # Process Objection Handling
-                elif "3. Objection Handling" in section:
+                elif any(x in section for x in ["Objection Handling", "OBJECTIONS"]):
                     current_section = "objection_handling"
+                    objections = re.split(r'\n(?=[a-z]\)|\d\.)', section)
+                    
+                    for objection in objections[1:]:  # Skip header
+                        lines = objection.split("\n")
+                        if not lines:
+                            continue
+                            
+                        objection_text = re.sub(r'^[a-z]\)|^\d\.', '', lines[0]).strip().strip('"')
+                        response = ""
+                        examples = []
+                        effectiveness = ""
+                        
+                        for line in lines[1:]:
+                            line = line.strip()
+                            if line.startswith("Response:"):
+                                response = line.split(":", 1)[1].strip().strip('"')
+                            elif line.startswith("Example:"):
+                                examples.append(line.split(":", 1)[1].strip().strip('"'))
+                            elif line.startswith("- Effect:") or line.startswith("Effectiveness:"):
+                                effectiveness = line.split(":", 1)[1].strip()
+                            elif line.startswith("-"):
+                                if not response:
+                                    response = line.strip("- ")
+                                else:
+                                    effectiveness += " " + line.strip("- ")
+                        
+                        structured_data["objection_handling"].append({
+                            "objection": objection_text,
+                            "response": response,
+                            "examples": examples,
+                            "effectiveness": effectiveness
+                        })
                     continue
                 
                 # Process Voice Agent Guidelines
-                elif "4. Voice Agent Guidelines" in section:
+                elif any(x in section for x in ["Voice Agent Guidelines", "GUIDELINES"]):
                     current_section = "voice_agent_guidelines"
+                    
+                    # Split into Do's and Don'ts sections
+                    do_section = ""
+                    dont_section = ""
+                    
+                    if "DO's:" in section:
+                        parts = section.split("DO's:", 1)
+                        if len(parts) > 1:
+                            do_section = parts[1].split("DON'T's:")[0] if "DON'T's:" in parts[1] else parts[1]
+                    
+                    if "DON'T's:" in section:
+                        dont_section = section.split("DON'T's:", 1)[1]
+                    
+                    # Process Do's
+                    for line in do_section.split("\n"):
+                        if line.strip().startswith("-"):
+                            structured_data["voice_agent_guidelines"].append({
+                                "type": "do",
+                                "description": line.strip("- "),
+                                "context": "Best practice guideline"
+                            })
+                    
+                    # Process Don'ts
+                    for line in dont_section.split("\n"):
+                        if line.strip().startswith("-"):
+                            structured_data["voice_agent_guidelines"].append({
+                                "type": "dont",
+                                "description": line.strip("- "),
+                                "context": "Practice to avoid"
+                            })
                     continue
                 
-                # Process Script Template
+                # Process Closing Techniques
+                elif any(x in section for x in ["Closing", "CLOSING"]):
+                    current_section = "closing_techniques"
+                    techniques = re.split(r'\n(?=[a-z]\)|\d\.)', section)
+                    
+                    for technique in techniques[1:]:  # Skip header
+                        lines = technique.split("\n")
+                        if not lines:
+                            continue
+                            
+                        name = re.sub(r'^[a-z]\)|^\d\.', '', lines[0]).strip()
+                        description = ""
+                        examples = []
+                        
+                        for line in lines[1:]:
+                            line = line.strip()
+                            if line.startswith("Example:") or line.startswith("- Quote:"):
+                                examples.append(line.split(":", 1)[1].strip().strip('"'))
+                            elif line.startswith("-"):
+                                if not description:
+                                    description = line.strip("- ")
+                                else:
+                                    description += " " + line.strip("- ")
+                        
+                        structured_data["closing_techniques"].append({
+                            "name": name,
+                            "description": description,
+                            "examples": examples
+                        })
+                    continue
+                
+                # Process Script Templates
                 elif "Script Template:" in section:
-                    template = section.split("Script Template:")[1].strip()
+                    template = section.split("Script Template:", 1)[1].strip()
+                    context = "Main outbound call script"
+                    if ":" in template:
+                        context, template = template.split(":", 1)
                     structured_data["script_templates"].append({
-                        "template": template,
-                        "context": "Main outbound call script"
+                        "template": template.strip(),
+                        "context": context.strip()
                     })
                     continue
                 
                 # Process Key Phrases
-                elif "Key Phrases to Use:" in section:
-                    phrases = [
-                        phrase.strip('- "')
-                        for phrase in section.split("\n")
-                        if phrase.strip().startswith("-")
-                    ]
-                    structured_data["key_phrases"].extend(phrases)
-                    continue
-                
-                if not current_section:
-                    continue
-                
-                # Process section content based on current section
-                if current_section == "sales_techniques":
-                    if section.startswith("a)") or section.startswith("b)") or section.startswith("c)"):
-                        if current_item:
-                            structured_data["sales_techniques"].append(current_item)
-                        
-                        lines = section.split("\n")
-                        technique_name = lines[0].split(")")[1].strip()
-                        current_item = {
-                            "name": technique_name,
-                            "description": "",
-                            "examples": [],
-                            "effectiveness": ""
-                        }
-                        
-                        for line in lines[1:]:
-                            line = line.strip()
-                            if line.startswith("- Quote:"):
-                                current_item["examples"].append(line.replace("- Quote:", "").strip().strip('"'))
-                            elif line.startswith("-"):
-                                if not current_item["description"]:
-                                    current_item["description"] = line.strip("- ")
-                                else:
-                                    current_item["effectiveness"] += line.strip("- ") + " "
-                
-                elif current_section == "communication_strategies":
-                    if section.startswith("a)") or section.startswith("b)"):
-                        if current_item:
-                            structured_data["communication_strategies"].append(current_item)
-                        
-                        lines = section.split("\n")
-                        strategy_name = lines[0].split(")")[1].strip()
-                        current_item = {
-                            "type": strategy_name,
-                            "description": "",
-                            "examples": [],
-                            "effectiveness": ""
-                        }
-                        
-                        for line in lines[1:]:
-                            line = line.strip()
-                            if line.startswith("Quote:"):
-                                current_item["examples"].append(line.replace("Quote:", "").strip().strip('"'))
-                            elif line.startswith("-"):
-                                if not current_item["description"]:
-                                    current_item["description"] = line.strip("- ")
-                                else:
-                                    current_item["effectiveness"] += line.strip("- ") + " "
-                
-                elif current_section == "objection_handling":
-                    if section.startswith("a)") or section.startswith("b)"):
-                        if current_item:
-                            structured_data["objection_handling"].append(current_item)
-                        
-                        lines = section.split("\n")
-                        objection_name = lines[0].split(")")[1].strip().strip('"')
-                        response = ""
-                        for line in lines[1:]:
-                            if line.startswith("Response:"):
-                                response = line.replace("Response:", "").strip().strip('"')
-                                break
-                        
-                        current_item = {
-                            "name": objection_name,
-                            "description": response,
-                            "examples": [],
-                            "effectiveness": ""
-                        }
-                        
-                        for line in lines[1:]:
-                            line = line.strip()
-                            if line.startswith("-"):
-                                current_item["effectiveness"] += line.strip("- ") + " "
-                
-                elif current_section == "voice_agent_guidelines":
-                    if "DO's:" in section:
-                        guidelines = section.split("DO's:")[1].split("DON'T's:")[0]
-                        for line in guidelines.split("\n"):
-                            if line.strip().startswith("-"):
-                                structured_data["voice_agent_guidelines"].append({
-                                    "name": "Do",
-                                    "description": line.strip("- "),
-                                    "examples": [],
-                                    "context": "Best practice guideline"
-                                })
-                    
-                    if "DON'T's:" in section:
-                        guidelines = section.split("DON'T's:")[1]
-                        for line in guidelines.split("\n"):
-                            if line.strip().startswith("-"):
-                                structured_data["voice_agent_guidelines"].append({
-                                    "name": "Don't",
-                                    "description": line.strip("- "),
-                                    "examples": [],
-                                    "context": "Practice to avoid"
-                                })
-            
-            # Add the last item if exists
-            if current_item:
-                if current_section == "sales_techniques":
-                    structured_data["sales_techniques"].append(current_item)
-                elif current_section == "communication_strategies":
-                    structured_data["communication_strategies"].append(current_item)
-                elif current_section == "objection_handling":
-                    structured_data["objection_handling"].append(current_item)
+                elif "Key Phrases" in section:
+                    for line in section.split("\n"):
+                        if line.strip().startswith("-"):
+                            phrase = line.strip("- ").strip('"')
+                            if phrase:
+                                structured_data["key_phrases"].append(phrase)
             
             return structured_data
             
@@ -783,65 +852,313 @@ Remember to stay natural and conversational while implementing these guidelines.
                 "voice_agent_guidelines": [],
                 "script_templates": [],
                 "key_phrases": [],
-                "raw_analysis": analysis_text
+                "closing_techniques": [],
+                "raw_analysis": analysis_text,
+                "error": str(e)
             }
+
+    def _extract_behavioral_patterns(self, analysis_data: Dict) -> Dict:
+        """Extract behavioral patterns from analysis data"""
+        patterns = {
+            "customer_signals": [],
+            "agent_responses": [],
+            "interaction_flows": [],
+            "success_patterns": []
+        }
+        
+        # Extract from sales techniques
+        for technique in analysis_data.get("sales_techniques", []):
+            if technique.get("effectiveness"):
+                patterns["success_patterns"].append({
+                    "technique": technique["name"],
+                    "context": technique["description"],
+                    "effectiveness": technique["effectiveness"],
+                    "examples": technique.get("examples", [])
+                })
+            
+            # Look for customer interaction patterns
+            for example in technique.get("examples", []):
+                if any(signal in example.lower() for signal in ["when customer", "if prospect", "customer says"]):
+                    patterns["customer_signals"].append({
+                        "context": technique["name"],
+                        "signal": example,
+                        "response_type": technique["description"]
+                    })
+
+        # Extract from communication strategies
+        for strategy in analysis_data.get("communication_strategies", []):
+            if strategy.get("examples"):
+                patterns["agent_responses"].append({
+                    "context": strategy["type"],
+                    "responses": strategy["examples"],
+                    "effectiveness": strategy.get("effectiveness", "")
+                })
+            
+            # Look for interaction patterns
+            if strategy.get("description"):
+                patterns["interaction_flows"].append({
+                    "type": strategy["type"],
+                    "flow": strategy["description"],
+                    "examples": strategy.get("examples", [])
+                })
+
+        return patterns
+
+    def _identify_success_markers(self, analysis_data: Dict) -> Dict:
+        """Identify success markers and indicators from analysis"""
+        markers = {
+            "positive_indicators": [],
+            "engagement_signals": [],
+            "conversion_points": [],
+            "risk_factors": []
+        }
+        
+        # Extract from summary
+        if "summary" in analysis_data:
+            summary = analysis_data["summary"]
+            if "unique_approaches" in summary:
+                for approach in summary["unique_approaches"]:
+                    markers["positive_indicators"].append({
+                        "type": "approach",
+                        "description": approach
+                    })
+        
+        # Extract from objection handling
+        for objection in analysis_data.get("objection_handling", []):
+            if objection.get("effectiveness"):
+                if "success" in objection["effectiveness"].lower() or "positive" in objection["effectiveness"].lower():
+                    markers["conversion_points"].append({
+                        "context": "objection_handled",
+                        "trigger": objection.get("objection", ""),
+                        "response": objection.get("response", ""),
+                        "effectiveness": objection["effectiveness"]
+                    })
+            else:
+                markers["risk_factors"].append({
+                    "type": "objection",
+                    "description": objection.get("objection", ""),
+                    "mitigation": objection.get("response", "")
+                })
+
+        # Extract from voice agent guidelines
+        for guideline in analysis_data.get("voice_agent_guidelines", []):
+            if guideline.get("type") == "do":
+                markers["engagement_signals"].append({
+                    "type": "best_practice",
+                    "description": guideline["description"],
+                    "context": guideline.get("context", "")
+                })
+            else:
+                markers["risk_factors"].append({
+                    "type": "guideline",
+                    "description": guideline["description"],
+                    "context": guideline.get("context", "")
+                })
+
+        return markers
+
+    def _map_conversation_pathways(self, analysis_data: Dict) -> List[Dict]:
+        """Map different conversation pathways based on analysis"""
+        pathways = []
+        
+        # Extract standard pathway
+        standard_path = {
+            "type": "standard",
+            "stages": [
+                {"name": "opening", "techniques": []},
+                {"name": "discovery", "techniques": []},
+                {"name": "solution", "techniques": []},
+                {"name": "closing", "techniques": []}
+            ],
+            "transitions": []
+        }
+        
+        # Map techniques to stages
+        for technique in analysis_data.get("sales_techniques", []):
+            technique_name = technique["name"].lower()
+            if any(x in technique_name for x in ["open", "greet", "introduction"]):
+                standard_path["stages"][0]["techniques"].append(technique)
+            elif any(x in technique_name for x in ["question", "discover", "probe"]):
+                standard_path["stages"][1]["techniques"].append(technique)
+            elif any(x in technique_name for x in ["present", "solution", "value"]):
+                standard_path["stages"][2]["techniques"].append(technique)
+            elif any(x in technique_name for x in ["close", "commit", "next steps"]):
+                standard_path["stages"][3]["techniques"].append(technique)
+        
+        pathways.append(standard_path)
+        
+        # Extract objection pathway
+        objection_path = {
+            "type": "objection_handling",
+            "trigger_points": [],
+            "responses": [],
+            "recovery_paths": []
+        }
+        
+        for objection in analysis_data.get("objection_handling", []):
+            objection_path["trigger_points"].append({
+                "objection": objection.get("objection", ""),
+                "context": objection.get("context", "")
+            })
+            objection_path["responses"].append({
+                "objection": objection.get("objection", ""),
+                "response": objection.get("response", ""),
+                "effectiveness": objection.get("effectiveness", "")
+            })
+        
+        pathways.append(objection_path)
+        
+        return pathways
 
     def _generate_voice_prompt(self, analysis_data: Dict) -> str:
         """Generate a detailed voice agent prompt from the structured analysis data"""
         try:
-            prompt = """You are an advanced AI voice sales agent. Your primary goal is to engage in natural, persuasive sales conversations while maintaining authenticity and ethical standards.
+            # Extract key components from structured data
+            sales_techniques = analysis_data.get("sales_techniques", [])
+            
+            # Build context section
+            context_section = """CONTEXT & OBJECTIVES:
+This is a sales training focused on building confidence, handling objections, and mastering closing techniques. The emphasis is on transforming sales professionals into confident closers through proven psychological techniques and systematic response preparation.
 
-CONTEXT & OBJECTIVES:
-{context}
+Key Techniques:
+- Identity Shifting: Creating a confident sales persona
+- Value Anchoring: Connecting price to long-term value
+- Emotional Connection: Speaking to desires rather than logic
+- Hypothetical Questioning: Bypassing initial resistance"""
 
-IDENTITY & PERSONA:
-- You are a professional, empathetic sales consultant
-- Your voice is warm, confident, and naturally engaging
-- You adapt your tone and pace to match the customer while staying professional
-- You demonstrate deep product knowledge and genuine desire to help
+            # Build identity section using identity shifting technique
+            identity_section = """IDENTITY & PERSONA:
+- Embody a confident, professional sales identity (like the Goggins example)
+- Project unwavering confidence while maintaining authenticity
+- Adapt tone and pace to match customer while staying authoritative
+- Demonstrate deep product knowledge and genuine desire to help
+- Maintain strong eye contact and assured presence"""
 
-CONVERSATION FRAMEWORK:
+            # Extract and format techniques by category
+            opening_techniques = [t for t in sales_techniques if "open" in t.get("name", "").lower()]
+            discovery_techniques = [t for t in sales_techniques if any(x in t.get("name", "").lower() for x in ["question", "discovery", "hypothetical"])]
+            presentation_techniques = [t for t in sales_techniques if any(x in t.get("name", "").lower() for x in ["value", "present", "emotional"])]
+            objection_techniques = [t for t in sales_techniques if "objection" in t.get("name", "").lower()]
+            closing_techniques = [t for t in sales_techniques if "clos" in t.get("name", "").lower()]
+
+            # Build conversation framework with specific techniques
+            conversation_framework = f"""CONVERSATION FRAMEWORK:
 
 1. OPENING (First 30 seconds):
-{opening_script}
+- Create a strong first impression with confident presence
+- Establish professional yet warm rapport
+- Set clear expectations for the conversation
+{chr(10).join(f'- {t["description"]}' for t in opening_techniques if t.get("description"))}
 
 2. DISCOVERY (2-3 minutes):
-{discovery_techniques}
+- Use hypothetical questioning to bypass resistance
+- Ask targeted, emotionally-focused questions
+- Listen actively and validate concerns
+{chr(10).join(f'- {t["description"]}' for t in discovery_techniques if t.get("description"))}
 
-3. SOLUTION PRESENTATION (2-3 minutes):
-{solution_techniques}
+3. VALUE PRESENTATION:
+- Connect features to emotional benefits
+- Use value anchoring to justify investment
+- Paint vivid pictures of positive outcomes
+{chr(10).join(f'- {t["description"]}' for t in presentation_techniques if t.get("description"))}
 
-4. HANDLING CONCERNS:
-{objection_handling}
+4. OBJECTION HANDLING:
+- Redirect from price to value
+- Isolate real concerns behind objections
+- Use emotional connection to overcome resistance
+{chr(10).join(f'- {t["description"]}' for t in objection_techniques if t.get("description"))}
 
 5. CLOSING:
-{closing_techniques}
+- Maintain unwavering confidence
+- Use assumptive closing techniques
+- Set clear next steps with urgency
+{chr(10).join(f'- {t["description"]}' for t in closing_techniques if t.get("description"))}"""
 
-VOICE & LANGUAGE PATTERNS:
+            # Build techniques section with examples
+            techniques_section = """CORE TECHNIQUES:
 
-Approved Scripts & Templates:
-{scripts}
+1. Identity Shifting:
+- Create and maintain a confident sales persona
+- Separate personal from professional identity
+- Project unwavering confidence in delivery
+Example: "When I'm in someone's home...I've already decided it's not David Goggins, it's Goggins"
 
-Power Phrases:
-{key_phrases}
+2. Value Anchoring:
+- Connect price to long-term value/consequences
+- Focus on lifetime benefits over immediate cost
+- Use concrete examples and metaphors
+Example: "These trees out here that took 30 years to grow take a day to tear down"
 
-Communication Strategies:
-{strategies}
+3. Hypothetical Questioning:
+- Bypass initial resistance with indirect approach
+- Create mental ownership and commitment
+- Guide customer through decision process
+Example: "Hypothetically, if you did talk to her and she said let's go, would we do it?"
 
-BEHAVIORAL GUIDELINES:
+4. Emotional Connection Building:
+- Speak to emotional desires over logical concerns
+- Paint vivid pictures of positive outcomes
+- Link features to personal benefits
+Example: "Nancy, you've envisioned in your head what this backyard is going to look like..."
+
+5. Objection Resolution:
+- Redirect from price to value
+- Isolate real concerns behind objections
+- Use emotional connection to overcome resistance
+Example: "What part of the proposal today are you wanting to think about?"""
+
+            # Build power phrases section
+            power_phrases = """POWER PHRASES:
+
+Opening:
+- "Let me ask you a question..."
+- "I totally understand..."
+- "What would that be worth to you?"
+- "I won't let you down"
+
+Value Building:
+- "These trees took 30 years to grow..."
+- "Imagine your family enjoying..."
+- "What's that peace of mind worth?"
+
+Objection Handling:
+- "Let's look at it this way..."
+- "What part specifically concerns you?"
+- "If we could address that concern..."
+
+Closing:
+- "When would you like to get started?"
+- "Let's take care of this today"
+- "You're already spending the money..."
+"""
+
+            # Build behavioral guidelines
+            behavioral_section = """BEHAVIORAL GUIDELINES:
 
 Do's:
-{dos}
+- Maintain unwavering confidence in delivery
+- Practice responses until they're automatic
+- Use strong eye contact during closes
+- Speak with conviction and authority
+- Stay emotionally connected with customer
 
 Don'ts:
-{donts}
+- Show uncertainty in pricing
+- Let customer see you thinking about responses
+- Allow long pauses in objection handling
+- Break character or lose confidence
+- Focus on logic over emotion"""
 
-META INSTRUCTIONS:
-1. Always maintain natural conversation flow
-2. Adapt responses based on customer's emotional state
-3. Use silence strategically - allow customer to process
-4. Mirror customer's speech pattern while staying professional
+            # Build meta instructions
+            meta_instructions = """META INSTRUCTIONS:
+1. Maintain your confident sales identity throughout
+2. Adapt responses based on emotional signals
+3. Use strategic silence for impact
+4. Mirror customer's speech pattern while staying authoritative
 5. Break complex information into digestible segments
+6. Always maintain control of the conversation
+7. Use value anchoring in every phase
+8. Keep emotional connection as primary focus
 
 ETHICAL FRAMEWORK:
 1. Always prioritize customer's best interests
@@ -850,104 +1167,155 @@ ETHICAL FRAMEWORK:
 4. Be transparent about limitations
 5. Maintain professional boundaries
 
-Remember: Your goal is to be helpful and genuine, not pushy or manipulative. Build trust through authenticity and expertise."""
+Remember: Success comes from unwavering confidence, emotional connection, and systematic response preparation. Build trust through authenticity while maintaining your strong sales identity."""
 
-            # Format context section
-            context_section = analysis_data.get("summary", {}).get("overview", "No specific context provided")
-            
-            # Format opening script
-            opening_script = "- Use this proven script structure:\n"
-            for template in analysis_data.get("script_templates", []):
-                opening_script += f'  "{template.get("template", "")}"\n'
-            
-            # Format discovery techniques
-            discovery_techniques = ""
-            for technique in analysis_data.get("sales_techniques", []):
-                if "question" in technique.get("name", "").lower() or "discovery" in technique.get("name", "").lower():
-                    discovery_techniques += f"- {technique['name']}:\n"
-                    discovery_techniques += f"  Description: {technique['description']}\n"
-                    if technique.get("examples"):
-                        discovery_techniques += "  Example phrases:\n"
-                        for example in technique["examples"]:
-                            discovery_techniques += f'    "{example}"\n'
-            
-            # Format solution presentation techniques
-            solution_techniques = ""
-            for technique in analysis_data.get("sales_techniques", []):
-                if "value" in technique.get("name", "").lower() or "story" in technique.get("name", "").lower():
-                    solution_techniques += f"- {technique['name']}:\n"
-                    solution_techniques += f"  Description: {technique['description']}\n"
-                    if technique.get("examples"):
-                        solution_techniques += "  Example phrases:\n"
-                        for example in technique["examples"]:
-                            solution_techniques += f'    "{example}"\n'
-            
-            # Format objection handling
-            objection_handling = ""
-            for objection in analysis_data.get("objection_handling", []):
-                # Check if we have a description or type to use as the objection text
-                objection_text = objection.get('description', objection.get('type', ''))
-                if not objection_text:
-                    continue
-                    
-                response = objection.get('response', objection.get('effectiveness', ''))
-                objection_handling += f"- When customer says: \"{objection_text}\"\n"
-                if response:
-                    objection_handling += f"  Respond with: \"{response}\"\n"
-            
-            # Format closing techniques
-            closing_techniques = "- Thank them for their time\n- Set clear next steps\n- Leave door open for future contact"
-            
-            # Format scripts section
-            scripts = ""
-            for template in analysis_data.get("script_templates", []):
-                scripts += f"- {template.get('context', 'Script')}:\n"
-                scripts += f'  "{template.get("template", "")}"\n'
-            
-            # Format key phrases
-            key_phrases = ""
-            for phrase in analysis_data.get("key_phrases", []):
-                key_phrases += f'- "{phrase}"\n'
-            
-            # Format communication strategies
-            strategies = ""
-            for strategy in analysis_data.get("communication_strategies", []):
-                strategies += f"- {strategy['type']}:\n"
-                strategies += f"  {strategy['description']}\n"
-                if strategy.get("examples"):
-                    strategies += "  Examples:\n"
-                    for example in strategy["examples"]:
-                        strategies += f'    "{example}"\n'
-            
-            # Format guidelines
-            dos = ""
-            donts = ""
-            for guideline in analysis_data.get("voice_agent_guidelines", []):
-                if guideline["name"] == "Do":
-                    dos += f"- {guideline['description']}\n"
-                else:
-                    donts += f"- {guideline['description']}\n"
-            
-            # Format the final prompt
-            formatted_prompt = prompt.format(
-                context=context_section,
-                opening_script=opening_script or "- Greet warmly and professionally\n- Establish rapport quickly\n- State purpose clearly",
-                discovery_techniques=discovery_techniques or "- Ask open-ended questions\n- Listen actively\n- Show genuine interest",
-                solution_techniques=solution_techniques or "- Present tailored solutions\n- Focus on benefits\n- Use social proof",
-                objection_handling=objection_handling or "- Listen fully\n- Acknowledge concerns\n- Provide solutions",
-                closing_techniques=closing_techniques,
-                scripts=scripts or "No specific scripts provided",
-                key_phrases=key_phrases or "No specific key phrases provided",
-                strategies=strategies or "No specific strategies provided",
-                dos=dos or "- Be professional and courteous",
-                donts=donts or "- Never be pushy or aggressive"
-            )
-            
-            return formatted_prompt
+            # Combine all sections
+            prompt = f"""You are an advanced AI voice sales agent, trained in high-performance sales techniques and emotional intelligence. Your goal is to engage in natural, persuasive sales conversations while maintaining unwavering confidence and authenticity.
+
+{context_section}
+
+{identity_section}
+
+{conversation_framework}
+
+{techniques_section}
+
+{power_phrases}
+
+{behavioral_section}
+
+{meta_instructions}"""
+
+            return prompt
             
         except Exception as e:
             logger.error(f"Error generating voice prompt: {str(e)}", exc_info=True)
             return "Error generating voice prompt. Please check the logs for details."
+
+    def _format_behavioral_patterns(self, patterns: Dict) -> str:
+        """Format behavioral patterns into prompt section"""
+        formatted = "Key Interaction Patterns:\n"
+        
+        # Add customer signals
+        if patterns["customer_signals"]:
+            formatted += "\nCustomer Signal Patterns:\n"
+            for signal in patterns["customer_signals"][:3]:  # Limit to top 3
+                formatted += f"- When: {signal['signal']}\n  Response: {signal['response_type']}\n"
+        
+        # Add agent responses
+        if patterns["agent_responses"]:
+            formatted += "\nProven Response Patterns:\n"
+            for response in patterns["agent_responses"][:3]:  # Limit to top 3
+                formatted += f"- Context: {response['context']}\n  Approaches: {', '.join(response['responses'][:2])}\n"
+        
+        return formatted
+
+    def _format_conversation_flows(self, flows: List[Dict]) -> str:
+        """Format conversation flows into prompt section"""
+        formatted = "Available Conversation Paths:\n"
+        
+        for flow in flows:
+            if flow["type"] == "standard":
+                formatted += "\nStandard Path:\n"
+                for stage in flow["stages"]:
+                    if stage["techniques"]:
+                        formatted += f"- {stage['name'].title()}:\n"
+                        for technique in stage["techniques"][:2]:  # Limit to top 2
+                            formatted += f"  * {technique['name']}: {technique['description']}\n"
+            elif flow["type"] == "objection_handling":
+                formatted += "\nObjection Handling Paths:\n"
+                for trigger in flow["trigger_points"][:3]:  # Limit to top 3
+                    formatted += f"- On: {trigger['objection']}\n"
+        
+        return formatted
+
+    def _format_success_markers(self, markers: Dict) -> str:
+        """Format success markers into prompt section"""
+        formatted = "Key Success Indicators:\n"
+        
+        if markers["positive_indicators"]:
+            formatted += "\nPositive Signals:\n"
+            for indicator in markers["positive_indicators"][:3]:
+                formatted += f"- {indicator['description']}\n"
+        
+        if markers["conversion_points"]:
+            formatted += "\nConversion Triggers:\n"
+            for point in markers["conversion_points"][:3]:
+                formatted += f"- When: {point['trigger']}\n  Success Response: {point['response']}\n"
+        
+        return formatted
+
+    def _format_adaptation_rules(self, patterns: Dict, markers: Dict) -> str:
+        """Format adaptation rules into prompt section"""
+        formatted = "Dynamic Adaptation Guidelines:\n"
+        
+        # Add interaction-based rules
+        if patterns["interaction_flows"]:
+            formatted += "\nInteraction Adjustments:\n"
+            for flow in patterns["interaction_flows"][:3]:
+                formatted += f"- When using {flow['type']}:\n  {flow['flow']}\n"
+        
+        # Add success-based rules
+        if markers["engagement_signals"]:
+            formatted += "\nEngagement Rules:\n"
+            for signal in markers["engagement_signals"][:3]:
+                formatted += f"- {signal['description']}\n"
+        
+        return formatted
+
+    def _format_techniques_for_stage(self, flows: List[Dict], stage: str) -> str:
+        """Format techniques for a specific conversation stage"""
+        formatted = ""
+        
+        for flow in flows:
+            if flow["type"] == "standard":
+                for s in flow["stages"]:
+                    if s["name"] == stage and s["techniques"]:
+                        for technique in s["techniques"][:3]:  # Limit to top 3
+                            formatted += f"- {technique['name']}:\n"
+                            formatted += f"  Purpose: {technique['description']}\n"
+                            if technique.get("examples"):
+                                formatted += f"  Example: {technique['examples'][0]}\n"
+        
+        return formatted or "Use standard best practices for this stage"
+
+    def _format_objection_handling(self, flows: List[Dict]) -> str:
+        """Format objection handling patterns"""
+        formatted = ""
+        
+        for flow in flows:
+            if flow["type"] == "objection_handling":
+                for response in flow["responses"][:3]:  # Limit to top 3
+                    formatted += f"- When hearing: {response['objection']}\n"
+                    formatted += f"  Respond with: {response['response']}\n"
+                    if response.get("effectiveness"):
+                        formatted += f"  Effectiveness: {response['effectiveness']}\n"
+        
+        return formatted or "Follow standard objection handling practices"
+
+    def _format_customer_signals(self, signals: List[Dict]) -> str:
+        """Format customer signals section"""
+        formatted = "Watch for these customer indicators:\n"
+        
+        for signal in signals[:5]:  # Limit to top 5
+            formatted += f"- Signal: {signal['signal']}\n"
+            formatted += f"  Context: {signal['context']}\n"
+            formatted += f"  Response: {signal['response_type']}\n"
+        
+        return formatted
+
+    def _format_response_patterns(self, patterns: List[Dict]) -> str:
+        """Format response patterns section"""
+        formatted = "Proven response patterns:\n"
+        
+        for pattern in patterns[:5]:  # Limit to top 5
+            formatted += f"- Context: {pattern['context']}\n"
+            if pattern["responses"]:
+                formatted += f"  Examples:\n"
+                for response in pattern["responses"][:2]:
+                    formatted += f"    * {response}\n"
+        
+        return formatted
 
     def _get_transcript(self, video_id: str) -> str:
         """Get transcript for a video."""
