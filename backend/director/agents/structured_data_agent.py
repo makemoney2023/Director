@@ -67,9 +67,9 @@ class StructuredDataAgent(BaseAgent):
 
     def _get_structure_prompt(self, analysis: str, voice_prompt: str, format: str) -> List[Dict[str, str]]:
         """Generate appropriate prompt for structured data generation"""
-        system_prompt = """You are an expert in converting sales analysis and voice prompts into structured data optimized for LLM consumption. Your task is to generate clean, well-organized JSON data that captures all key information.
+        system_prompt = """You are an expert in converting sales analysis and voice prompts into structured YAML data optimized for LLM consumption. Your task is to generate clean, well-organized YAML that captures all key information.
 
-Your output must be valid JSON and should include:
+Your output must be valid YAML and should include:
 
 1. METADATA
 - Version information
@@ -106,18 +106,20 @@ FORMAT REQUIREMENTS:
 2. Include type information
 3. Provide usage examples
 4. Add descriptive comments
-5. Ensure valid JSON structure
+5. Ensure valid YAML structure
+6. ALWAYS wrap the output in ```yaml code blocks
 
 The output should be immediately usable by other LLMs without additional processing."""
 
-        user_prompt = f"""Convert this sales analysis and voice prompt into structured {format} format.
+        user_prompt = f"""Convert this sales analysis and voice prompt into structured {format} format YAML.
 
 The output should:
 1. Capture all key information
 2. Maintain relationships between components
 3. Include clear metadata
 4. Provide usage guidelines
-5. Follow JSON best practices
+5. Follow YAML best practices
+6. Be wrapped in ```yaml code blocks
 
 Analysis:
 {analysis}
@@ -129,7 +131,8 @@ Remember to:
 - Use consistent formatting
 - Include all relevant data
 - Maintain clear structure
-- Add helpful metadata"""
+- Add helpful metadata
+- Wrap output in ```yaml blocks"""
 
         return [
             {"role": "system", "content": system_prompt},
@@ -149,10 +152,21 @@ Remember to:
         """Save the structured data to a file"""
         try:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            filename = f"data/structured_{format}_{timestamp}.json"
-            
-            with open(filename, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=2)
+            # If we have YAML content, save it as YAML
+            if "yaml_content" in data:
+                filename = f"data/structured_{format}_{timestamp}.yaml"
+                yaml_content = data["yaml_content"]
+                if yaml_content.startswith("```yaml"):
+                    yaml_content = yaml_content.split("```yaml")[1]
+                if yaml_content.endswith("```"):
+                    yaml_content = yaml_content.rsplit("```", 1)[0]
+                
+                with open(filename, 'w', encoding='utf-8') as f:
+                    f.write(yaml_content.strip())
+            else:
+                filename = f"data/structured_{format}_{timestamp}.json"
+                with open(filename, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, indent=2)
             
             return filename
         except Exception as e:
@@ -165,19 +179,24 @@ Remember to:
             # First try to parse as is
             return json.loads(content)
         except json.JSONDecodeError:
-            # If fails, try to extract JSON from markdown
             try:
                 # Look for JSON code blocks
                 if "```json" in content:
                     json_content = content.split("```json")[1].split("```")[0]
                     return json.loads(json_content)
+                # Look for YAML code blocks
+                elif "```yaml" in content:
+                    yaml_content = content.split("```yaml")[1].split("```")[0]
+                    # Convert YAML to JSON structure
+                    return {"yaml_content": yaml_content}
                 # Look for JSON objects
                 elif content.strip().startswith("{"):
                     return json.loads(content)
                 else:
-                    raise ValueError("Could not extract valid JSON from content")
+                    # Wrap plain text in markdown code block
+                    return {"yaml_content": f"```yaml\n{content}\n```"}
             except Exception as e:
-                raise ValueError(f"JSON validation failed: {str(e)}")
+                raise ValueError(f"Content validation failed: {str(e)}")
 
     def run(
         self,
@@ -205,9 +224,6 @@ Remember to:
             self.output_message.actions.append("Beginning structure generation...")
             self.output_message.push_update()
 
-            # Find similar structures for context
-            similar_structures = self._find_similar_structures()
-
             # Generate structured data
             messages = self._get_structure_prompt(analysis, voice_prompt, format)
             
@@ -215,34 +231,40 @@ Remember to:
             response = self.structure_llm.chat_completions(
                 messages=messages,
                 temperature=0.7,
-                max_tokens=4096
+                max_tokens=16384
             )
             
             if response.status == LLMResponseStatus.ERROR:
                 raise Exception(f"Anthropic structure generation failed: {response.message}")
 
-            # Validate and clean JSON
-            structured_data = self._validate_json(response.content)
+            # Extract YAML content directly from the response
+            content = response.content
+            if "```yaml" in content:
+                yaml_content = content.split("```yaml")[1].split("```")[0].strip()
+            else:
+                yaml_content = content.strip()
 
-            # Add metadata
-            metadata = {
-                "version": "1.0",
-                "timestamp": datetime.now().isoformat(),
-                "format": format,
-                "source": {
-                    "analysis": True,
-                    "voice_prompt": True
+            # Format the YAML content with code blocks
+            formatted_yaml = f"```yaml\n{yaml_content}\n```"
+
+            # Create structured data
+            structured_data = {
+                "yaml_content": formatted_yaml,
+                "metadata": {
+                    "version": "1.0",
+                    "timestamp": datetime.now().isoformat(),
+                    "format": format,
+                    "source": {
+                        "analysis": True,
+                        "voice_prompt": bool(voice_prompt)
+                    }
                 }
             }
-            structured_data["metadata"] = metadata
 
-            # Save the structured data
-            data_file = self._save_structured_data(structured_data, format)
-
-            # Store results
+            # Store results directly in text_content
             text_content.structured_data = structured_data
-            text_content.metadata = metadata
-            text_content.text = json.dumps(structured_data, indent=2)
+            text_content.metadata = structured_data["metadata"]
+            text_content.text = formatted_yaml  # Set the formatted YAML directly as text
             text_content.status = MsgStatus.success
             text_content.status_message = "Structured data generated"
             
@@ -256,8 +278,7 @@ Remember to:
                 data={
                     "structured_data": structured_data,
                     "format": format,
-                    "similar_structures": similar_structures,
-                    "data_file": data_file
+                    "yaml_content": formatted_yaml  # Include formatted YAML in response
                 }
             )
             

@@ -74,7 +74,7 @@ class AnthropicTool:
                     "model": self.model,
                     "messages": formatted_messages,
                     "temperature": temperature,
-                    "max_tokens": max_tokens if max_tokens else 8192,  # Sonnet max output tokens is 8192
+                    "max_tokens": max_tokens if max_tokens else 16384,  # Sonnet max output tokens is 16384
                 }
                 
                 if system_message:

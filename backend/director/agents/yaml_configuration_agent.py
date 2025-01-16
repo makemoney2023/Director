@@ -4,6 +4,7 @@ from datetime import datetime
 import yaml
 from pydantic import BaseModel
 import json
+import time
 
 from director.agents.base import BaseAgent, AgentResponse, AgentStatus
 from director.core.session import TextContent, MsgStatus, OutputMessage, Session
@@ -226,11 +227,82 @@ Remember to:
             
             # Validate voice settings
             if "voice_settings" in yaml_data:
-                required_voice_settings = ["tone", "pacing", "expression", "adaptation"]
-                missing_voice_settings = [setting for setting in required_voice_settings 
-                                        if setting not in yaml_data["voice_settings"]]
-                if missing_voice_settings:
-                    raise ValueError(f"Missing required voice settings: {', '.join(missing_voice_settings)}")
+                required_voice_settings = {
+                    "tone": ["base_tone", "variations", "adaptations"],
+                    "pacing": ["base_speed", "dynamic_range", "situational_adjustments"],
+                    "expression": ["emphasis_patterns", "emotional_markers", "pause_points"],
+                    "adaptation": ["customer_matching", "context_sensitivity", "emotional_mirroring", "response_calibration"]
+                }
+                
+                for setting, required_fields in required_voice_settings.items():
+                    if setting not in yaml_data["voice_settings"]:
+                        raise ValueError(f"Missing required voice setting: {setting}")
+                    
+                    missing_fields = [field for field in required_fields 
+                                    if field not in yaml_data["voice_settings"][setting]]
+                    if missing_fields:
+                        raise ValueError(f"Missing required fields in {setting}: {', '.join(missing_fields)}")
+            
+            # Validate conversation framework
+            required_framework_sections = {
+                "opening": ["approach", "key_elements", "timing"],
+                "discovery": ["question_types", "focus_areas", "techniques"],
+                "presentation": ["structure", "emphasis", "techniques"],
+                "objection_handling": ["approach", "key_principles", "responses"],
+                "closing": ["style", "techniques", "timing_triggers"]
+            }
+            
+            for section, required_fields in required_framework_sections.items():
+                if section not in yaml_data["conversation_framework"]:
+                    raise ValueError(f"Missing required conversation framework section: {section}")
+                
+                missing_fields = [field for field in required_fields 
+                                if field not in yaml_data["conversation_framework"][section]]
+                if missing_fields:
+                    raise ValueError(f"Missing required fields in {section}: {', '.join(missing_fields)}")
+            
+            # Validate communication patterns
+            required_pattern_fields = ["power_phrases", "transition_phrases", "emphasis_patterns", "response_templates"]
+            missing_pattern_fields = [field for field in required_pattern_fields 
+                                    if field not in yaml_data["communication_patterns"]]
+            if missing_pattern_fields:
+                raise ValueError(f"Missing required communication pattern fields: {', '.join(missing_pattern_fields)}")
+            
+            # Validate behavioral guidelines
+            required_guideline_fields = ["core_principles", "do", "dont", "adaptations"]
+            missing_guideline_fields = [field for field in required_guideline_fields 
+                                      if field not in yaml_data["behavioral_guidelines"]]
+            if missing_guideline_fields:
+                raise ValueError(f"Missing required behavioral guideline fields: {', '.join(missing_guideline_fields)}")
+            
+            # Validate quality thresholds
+            required_threshold_sections = {
+                "response_time": ["standard", "max_pause", "min_pause"],
+                "speech_metrics": ["clarity", "pace", "tone_consistency"],
+                "interaction_quality": ["turn_taking", "engagement", "effectiveness"]
+            }
+            
+            for section, required_fields in required_threshold_sections.items():
+                if section not in yaml_data["quality_thresholds"]:
+                    raise ValueError(f"Missing required quality threshold section: {section}")
+                
+                missing_fields = [field for field in required_fields 
+                                if field not in yaml_data["quality_thresholds"][section]]
+                if missing_fields:
+                    raise ValueError(f"Missing required fields in {section}: {', '.join(missing_fields)}")
+            
+            # Ensure non-empty values in critical sections
+            if not yaml_data["behavioral_guidelines"]["core_principles"]:
+                yaml_data["behavioral_guidelines"]["core_principles"] = ["Focus on customer needs", "Build trust through authenticity", "Practice active listening"]
+            
+            if not yaml_data["behavioral_guidelines"]["do"]:
+                yaml_data["behavioral_guidelines"]["do"] = ["Maintain professional tone", "Show genuine interest", "Follow conversation framework"]
+            
+            if not yaml_data["behavioral_guidelines"]["dont"]:
+                yaml_data["behavioral_guidelines"]["dont"] = ["Interrupt customer", "Use aggressive language", "Rush through discovery phase"]
+            
+            if not yaml_data["communication_patterns"]["power_phrases"]:
+                yaml_data["communication_patterns"]["power_phrases"] = ["I understand your perspective", "Let me show you how", "What are your thoughts on"]
             
             return yaml_data
             
@@ -248,93 +320,214 @@ Remember to:
                     raise ValueError("Could not extract valid YAML from content")
             except Exception as e:
                 raise ValueError(f"YAML validation failed: {str(e)}")
+        except Exception as e:
+            raise ValueError(f"YAML validation failed: {str(e)}")
 
     def _generate_yaml_config(self, analysis: str, structured_data: Dict) -> str:
         """Generate YAML configuration from analysis and structured data"""
         try:
-            # Extract key components from structured data
+            # Extract voice patterns and guidelines
+            voice_guidelines = structured_data.get("voice_agent_guidelines", [])
             sales_techniques = structured_data.get("sales_techniques", [])
             communication_strategies = structured_data.get("communication_strategies", [])
-            objection_handling = structured_data.get("objection_handling", [])
-            voice_guidelines = structured_data.get("voice_agent_guidelines", [])
             
-            # Build YAML configuration
+            # Build base configuration with required sections
             config = {
                 "metadata": {
                     "version": "1.0",
                     "type": "voice_agent_config",
-                    "generated_at": datetime.now().isoformat(),
-                    "description": "AI Voice Sales Agent Configuration"
+                    "description": "AI Voice Sales Agent Configuration",
+                    "last_updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 },
                 "voice_settings": {
                     "tone": {
-                        "base_characteristics": {
-                            "pitch": "medium",
-                            "rate": "moderate",
-                            "energy": "balanced"
-                        },
-                        "emotional_mapping": {
-                            "positive": {"pitch": "medium-high", "rate": "moderate", "energy": "high"},
-                            "neutral": {"pitch": "medium", "rate": "moderate", "energy": "medium"},
-                            "negative": {"pitch": "medium-low", "rate": "slower", "energy": "low"}
+                        "base_tone": "professional and confident",
+                        "variations": ["empathetic", "authoritative", "consultative"],
+                        "adaptations": {
+                            "objection_handling": "empathetic but firm",
+                            "value_presentation": "enthusiastic and confident",
+                            "closing": "assertive yet supportive"
                         }
                     },
-                    "adaptation_rules": {
-                        "customer_signals": [s.get("signal", "") for s in structured_data.get("customer_signals", [])],
-                        "response_patterns": [r.get("pattern", "") for r in structured_data.get("response_patterns", [])]
+                    "pacing": {
+                        "base_speed": "moderate",
+                        "dynamic_range": ["slow", "moderate", "quick"],
+                        "situational_adjustments": {
+                            "complex_information": "slower",
+                            "rapport_building": "moderate",
+                            "closing": "measured and deliberate"
+                        }
+                    },
+                    "expression": {
+                        "emphasis_patterns": ["key benefits", "value propositions", "urgency signals"],
+                        "emotional_markers": ["confidence", "empathy", "enthusiasm"],
+                        "pause_points": ["after key points", "before important questions", "during value statements"]
+                    },
+                    "adaptation": {
+                        "customer_matching": True,
+                        "context_sensitivity": True,
+                        "emotional_mirroring": True,
+                        "response_calibration": {
+                            "to_objections": "measured and understanding",
+                            "to_interest": "engaged and encouraging",
+                            "to_hesitation": "patient and supportive"
+                        }
                     }
                 },
                 "conversation_framework": {
                     "opening": {
-                        "techniques": [t.get("name", "") for t in sales_techniques if "open" in t.get("name", "").lower()],
-                        "key_phrases": [p for p in structured_data.get("key_phrases", []) if any(w in p.lower() for w in ["hello", "welcome", "introduction"])]
+                        "approach": "professional and warm",
+                        "key_elements": ["self-introduction", "rapport building", "purpose statement"],
+                        "timing": "first 30 seconds"
                     },
                     "discovery": {
-                        "techniques": [t.get("name", "") for t in sales_techniques if "question" in t.get("name", "").lower()],
-                        "strategies": [s.get("type", "") for s in communication_strategies if "discovery" in s.get("type", "").lower()]
+                        "question_types": ["open-ended", "probing", "confirming"],
+                        "focus_areas": ["needs", "preferences", "constraints"],
+                        "techniques": []
                     },
                     "presentation": {
-                        "techniques": [t.get("name", "") for t in sales_techniques if "present" in t.get("name", "").lower()],
-                        "value_props": [p for p in structured_data.get("key_phrases", []) if "value" in p.lower()]
+                        "structure": ["benefit", "feature", "value"],
+                        "emphasis": "customer-specific value",
+                        "techniques": []
                     },
                     "objection_handling": {
-                        "patterns": [{"objection": o.get("objection", ""), "response": o.get("response", "")} for o in objection_handling],
-                        "recovery_strategies": [s.get("type", "") for s in communication_strategies if "recovery" in s.get("type", "").lower()]
+                        "approach": "listen-acknowledge-respond",
+                        "key_principles": ["empathy", "redirection", "value focus"],
+                        "responses": {}
                     },
                     "closing": {
-                        "techniques": [t.get("name", "") for t in sales_techniques if "clos" in t.get("name", "").lower()],
-                        "signals": [s.get("signal", "") for s in structured_data.get("success_markers", [])]
+                        "style": "confident and assumptive",
+                        "techniques": [],
+                        "timing_triggers": ["positive signals", "value agreement", "concern resolution"]
                     }
                 },
+                "communication_patterns": {
+                    "power_phrases": [],
+                    "transition_phrases": [],
+                    "emphasis_patterns": [],
+                    "response_templates": {}
+                },
                 "behavioral_guidelines": {
-                    "core_principles": [g.get("description", "") for g in voice_guidelines if g.get("type") == "do"],
-                    "avoid_patterns": [g.get("description", "") for g in voice_guidelines if g.get("type") == "dont"],
-                    "professional_standards": [
-                        "Maintain professional tone and language",
-                        "Focus on customer needs",
-                        "Practice active listening",
-                        "Show genuine interest",
-                        "Be transparent and honest"
-                    ]
+                    "core_principles": [],
+                    "do": [],
+                    "dont": [],
+                    "adaptations": {
+                        "to_customer_style": True,
+                        "to_conversation_stage": True,
+                        "to_emotional_state": True
+                    }
                 },
                 "quality_thresholds": {
-                    "response_time": "2-3 seconds",
-                    "interruption_handling": "graceful pause and acknowledgment",
-                    "clarity_threshold": "95% comprehension rate",
-                    "engagement_metrics": {
-                        "min_turn_length": "10 words",
-                        "max_turn_length": "100 words",
-                        "ideal_pace": "150-180 words per minute"
+                    "response_time": {
+                        "standard": "2-3 seconds",
+                        "max_pause": "5 seconds",
+                        "min_pause": "1 second"
+                    },
+                    "speech_metrics": {
+                        "clarity": {
+                            "target": "95%",
+                            "minimum": "90%",
+                            "measurement": "word recognition rate"
+                        },
+                        "pace": {
+                            "optimal": "150-180 words per minute",
+                            "range": {
+                                "slow": "120-150 wpm",
+                                "normal": "150-180 wpm",
+                                "fast": "180-200 wpm"
+                            }
+                        },
+                        "tone_consistency": {
+                            "target": "90%",
+                            "minimum": "85%",
+                            "measurement": "emotional congruence"
+                        }
+                    },
+                    "interaction_quality": {
+                        "turn_taking": {
+                            "min_pause": "0.5 seconds",
+                            "max_pause": "2 seconds",
+                            "interruption_handling": "graceful pause and acknowledgment"
+                        },
+                        "engagement": {
+                            "min_turn_length": "10 words",
+                            "max_turn_length": "100 words",
+                            "follow_up_questions": "minimum 1 per topic"
+                        },
+                        "effectiveness": {
+                            "objection_resolution": "minimum 80% success rate",
+                            "call_progression": "maximum 3 topic shifts per minute",
+                            "value_statement_density": "1-2 per minute"
+                        }
                     }
                 }
             }
             
-            # Convert to YAML
-            return yaml.dump(config, sort_keys=False, allow_unicode=True)
+            # Extract and add techniques from structured data
+            for technique in sales_techniques:
+                name = technique.get("name", "").lower()
+                if "question" in name or "discovery" in name:
+                    config["conversation_framework"]["discovery"]["techniques"].append({
+                        "name": technique.get("name"),
+                        "description": technique.get("description"),
+                        "examples": technique.get("examples", [])
+                    })
+                elif "present" in name or "value" in name:
+                    config["conversation_framework"]["presentation"]["techniques"].append({
+                        "name": technique.get("name"),
+                        "description": technique.get("description"),
+                        "examples": technique.get("examples", [])
+                    })
+                elif "clos" in name:
+                    config["conversation_framework"]["closing"]["techniques"].append({
+                        "name": technique.get("name"),
+                        "description": technique.get("description"),
+                        "examples": technique.get("examples", [])
+                    })
+            
+            # Add communication patterns
+            for strategy in communication_strategies:
+                if strategy.get("examples"):
+                    config["communication_patterns"]["power_phrases"].extend(strategy.get("examples"))
+                if strategy.get("type"):
+                    config["communication_patterns"]["emphasis_patterns"].append({
+                        "type": strategy.get("type"),
+                        "description": strategy.get("description", ""),
+                        "examples": strategy.get("examples", [])
+                    })
+                    
+            # Add behavioral guidelines
+            for guideline in voice_guidelines:
+                if guideline.get("type") == "do":
+                    config["behavioral_guidelines"]["do"].append(guideline.get("description"))
+                elif guideline.get("type") == "dont":
+                    config["behavioral_guidelines"]["dont"].append(guideline.get("description"))
+            
+            # Add core principles from analysis
+            if "SUMMARY" in analysis:
+                summary_section = analysis.split("SUMMARY")[1].split("\n\n")[0]
+                principles = [line.strip("- ").strip() for line in summary_section.split("\n") if line.strip().startswith("-")]
+                config["behavioral_guidelines"]["core_principles"] = principles
+            
+            # Convert to YAML with proper formatting
+            yaml_str = """# AI Voice Sales Agent Configuration
+# Generated: {timestamp}
+# Purpose: Define voice characteristics, conversation patterns, and behavioral guidelines
+# Version: 1.0
+
+{yaml_content}""".format(
+                timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                yaml_content=yaml.dump(config, default_flow_style=False, sort_keys=False, allow_unicode=True)
+            )
+            
+            # Validate the configuration before returning
+            self._validate_yaml(yaml_str)
+            
+            return yaml_str
             
         except Exception as e:
             logger.error(f"Error generating YAML config: {str(e)}", exc_info=True)
-            return ""
+            raise Exception(f"YAML configuration generation failed: {str(e)}")
 
     def run(
         self,
@@ -369,7 +562,7 @@ Remember to:
             response = self.config_llm.chat_completions(
                 messages=messages,
                 temperature=0.7,
-                max_tokens=4096
+                max_tokens=16384
             )
             
             if response.status == LLMResponseStatus.ERROR:

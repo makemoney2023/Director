@@ -142,7 +142,7 @@ class AnthropicAI(BaseLLM):
         params = {
             "model": self.chat_model,
             "messages": messages,
-            "max_tokens": self.max_tokens
+            "max_tokens": 16384  # Maximum tokens for Claude 3.5 Sonnet
         }
         
         # Add system message if present

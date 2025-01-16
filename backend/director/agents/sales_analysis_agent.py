@@ -169,11 +169,11 @@ Remember to:
             self.output_message.actions.append("Beginning analysis...")
             self.output_message.push_update()
 
-            # Find similar analyses for context
-            similar_analyses = self._find_similar_analyses(transcript)
-            
             # Process transcript
             processed_transcript = self._process_transcript(transcript)
+            
+            # Find similar analyses
+            similar_analyses = self._find_similar_analyses(processed_transcript)
 
             # Generate analysis prompt
             messages = self._get_analysis_prompt(processed_transcript, analysis_type)
@@ -182,7 +182,7 @@ Remember to:
             response = self.analysis_llm.chat_completions(
                 messages=messages,
                 temperature=0.7,
-                max_tokens=4096
+                max_tokens=16384
             )
             
             if response.status == LLMResponseStatus.ERROR:
@@ -190,9 +190,12 @@ Remember to:
 
             # Store results
             text_content.raw_analysis = response.content
-            text_content.text = response.content
+            # Wrap the analysis in markdown code blocks if not already wrapped
+            analysis_text = response.content
+            if not analysis_text.startswith("```markdown"):
+                analysis_text = f"```markdown\n{analysis_text}\n```"
+            text_content.text = analysis_text
             text_content.analysis_data = {
-                "similar_analyses": similar_analyses,
                 "processed_transcript": processed_transcript
             }
             text_content.status = MsgStatus.success
