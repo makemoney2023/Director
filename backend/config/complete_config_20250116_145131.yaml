@@ -1,0 +1,115 @@
+system:
+  environment:
+    name: sales-training-outbound
+    version: 1.0.0
+    mode: production
+  logging:
+    level: INFO
+    format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    file: /var/log/sales-training.log
+  performance:
+    max_concurrent_calls: 50
+    call_timeout_seconds: 300
+    retry_attempts: 3
+voice_parameters:
+  tone:
+    pitch: medium
+    speed: natural
+    volume: 0.8
+    emphasis: moderate
+  pacing:
+    words_per_minute: 150
+    pause_threshold: 0.5
+    breathing_points: true
+  adaptation:
+    match_customer_pace: true
+    dynamic_volume: true
+training_settings:
+  sales_techniques:
+    permission_based:
+      enabled: true
+      key_phrases:
+      - Can I get 30 seconds of your time?
+      - Would you mind if I told you?
+      - Is it okay if I explain?
+    value_proposition:
+      enabled: true
+      emphasis_points:
+      - current market value
+      - special offers
+      - limited time opportunity
+  objection_handling:
+    strategies:
+      redirect_and_reframe:
+        enabled: true
+        examples:
+        - customer: I love my car
+          response: That's great. So does my manager. That's why I'm calling...
+      value_override:
+        enabled: true
+        threshold_multiplier: 1.5
+script_templates:
+  main_outbound:
+    introduction: 'Hey, what''s going on? It''s [Name] down here at [Dealership]  where
+      you bought your last car from.
+
+      '
+    value_prop: 'I was reviewing your account. I need about 30 seconds of your time.
+      It''s extremely important.
+
+      '
+    permission: Can I get 30 seconds?
+    variables:
+    - name: '[Name]'
+    - name: '[Dealership]'
+monitoring:
+  metrics:
+    call_success_rate:
+      threshold: 0.6
+      alert_below: 0.4
+    appointment_conversion:
+      threshold: 0.3
+      alert_below: 0.2
+    average_call_duration:
+      min_seconds: 60
+      max_seconds: 300
+  quality_checks:
+    script_adherence:
+      minimum_score: 0.8
+      check_frequency: real-time
+    tone_consistency:
+      minimum_score: 0.7
+      check_frequency: real-time
+integrations:
+  crm:
+    type: salesforce
+    endpoint: https://api.salesforce.com/v1
+    retry_attempts: 3
+    timeout_seconds: 30
+  call_system:
+    type: twilio
+    endpoint: https://api.twilio.com/2010-04-01
+    max_concurrent: 50
+    recording_enabled: true
+alerts:
+  channels:
+  - type: email
+    recipients:
+    - sales.manager@company.com
+    - training.lead@company.com
+  - type: slack
+    channel: '#sales-training-alerts'
+  thresholds:
+    critical:
+      response_time_ms: 5000
+      error_rate: 0.1
+    warning:
+      response_time_ms: 3000
+      error_rate: 0.05
+metadata:
+  version: '1.0'
+  timestamp: '2025-01-16T14:51:31.813022'
+  config_type: complete
+  source:
+    analysis: true
+    structured_data: true

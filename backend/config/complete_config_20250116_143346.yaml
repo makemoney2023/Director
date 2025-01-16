@@ -1,0 +1,116 @@
+system:
+  environment:
+    name: sales_training_ai
+    version: 1.0.0
+    mode: production
+  performance:
+    max_response_time: 2000
+    concurrent_calls: 50
+    memory_limit: 4096
+  logging:
+    level: INFO
+    format: json
+    retention_days: 30
+voice:
+  tone:
+    base_pitch: 220
+    variation_range: 20
+    speaking_rate: 150
+    volume: 0.8
+  style:
+    friendliness: 0.8
+    confidence: 0.7
+    empathy: 0.6
+    professionalism: 0.8
+training:
+  sales_techniques:
+    permission_based:
+      enabled: true
+      threshold: 0.8
+      key_phrases:
+      - Can I get 30 seconds?
+      - Would you mind if I told you?
+    value_first:
+      enabled: true
+      threshold: 0.7
+      value_propositions:
+      - offer you more money
+      - crazy number
+  communication:
+    question_framing:
+      yes_oriented: true
+      max_questions_per_call: 5
+    storytelling:
+      enabled: true
+      max_story_duration: 45
+  objection_handling:
+    strategies:
+    - name: lottery_ticket
+      priority: 1
+      responses:
+      - Have you ever won the lottery? You just have.
+      - I just want to blow your mind.
+    - name: no_pressure
+      priority: 2
+      responses:
+      - It's completely your decision.
+      - I'm not asking you to buy anything.
+scripts:
+  templates:
+    initial_greeting: "Hey, what's going on? It's {agent_name} down here at {dealership}\
+      \ \nwhere you bought your last car from.\n"
+    value_prop: "If we were willing to offer you more money, more money than what\
+      \ \nyour car was worth, would you mind if I told you how much that was?\n"
+  parameters:
+    max_script_duration: 180
+    required_fields:
+    - agent_name
+    - dealership
+    - customer_name
+    - vehicle_details
+monitoring:
+  metrics:
+  - name: call_success_rate
+    threshold: 0.6
+    alert_threshold: 0.4
+  - name: average_call_duration
+    min: 60
+    max: 300
+  - name: appointment_conversion
+    target: 0.3
+  quality:
+    recording:
+      enabled: true
+      sample_rate: 0.1
+      retention_days: 90
+    scoring:
+      min_acceptable_score: 0.7
+      criteria:
+      - script_adherence
+      - tone_appropriateness
+      - objection_handling
+      - closing_effectiveness
+alerts:
+  channels:
+    email:
+      enabled: true
+      recipients:
+      - sales.manager@company.com
+      - quality.team@company.com
+    slack:
+      enabled: true
+      channel: '#sales-ai-alerts'
+  thresholds:
+    critical:
+      response_time: 5000
+      error_rate: 0.05
+    warning:
+      response_time: 3000
+      error_rate: 0.02
+metadata:
+  version: '1.0'
+  timestamp: '2025-01-16T14:33:46.608197'
+  config_type: complete
+  source:
+    analysis: true
+    structured_data: true

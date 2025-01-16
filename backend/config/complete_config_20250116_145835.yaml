@@ -1,0 +1,115 @@
+system:
+  environment:
+    name: sales_training_ai
+    version: 1.0.0
+    mode: production
+    debug: false
+  performance:
+    max_response_time: 2000
+    concurrent_sessions: 50
+    memory_limit: 4GB
+  logging:
+    level: INFO
+    format: json
+    retention_days: 30
+    path: /var/log/sales-ai/
+voice:
+  tone:
+    base_pitch: 220
+    variation_range: 20
+    speaking_rate: 1.0
+    volume: 0.8
+  expression:
+    emphasis_words:
+    - extremely
+    - important
+    - opportunity
+    pause_markers:
+    - '...'
+    - ','
+    - .
+    pause_duration:
+      short: 0.2
+      medium: 0.5
+      long: 1.0
+training:
+  conversation:
+    opening_phrases:
+    - Hey, what's going on?
+    - This is [agent_name] from [dealership]
+    permission_requests:
+    - Can I get 30 seconds of your time?
+    - Is this a good time to talk?
+  responses:
+    objection_handling:
+      default_approach: value_first
+      max_attempts: 2
+      cooldown_period: 5
+    success_metrics:
+      min_engagement_time: 30
+      target_appointment_rate: 0.25
+      quality_threshold: 0.8
+integration:
+  endpoints:
+    crm:
+      url: https://api.crm.example.com/v1
+      timeout: 5000
+      retry_attempts: 3
+    analytics:
+      url: https://analytics.example.com/v1
+      batch_size: 100
+      flush_interval: 300
+  auth:
+    method: oauth2
+    client_id: ${CLIENT_ID}
+    client_secret: ${CLIENT_SECRET}
+    token_url: https://auth.example.com/token
+monitoring:
+  metrics:
+    collection_interval: 60
+    retention_period: 90
+    thresholds:
+      response_time_warning: 1500
+      response_time_critical: 3000
+      error_rate_warning: 0.05
+      error_rate_critical: 0.1
+  alerts:
+    channels:
+    - type: email
+      address: alerts@example.com
+    - type: slack
+      webhook: ${SLACK_WEBHOOK_URL}
+    rules:
+    - metric: response_time
+      threshold: 2000
+      duration: 5m
+      severity: warning
+    - metric: error_rate
+      threshold: 0.08
+      duration: 15m
+      severity: critical
+scripts:
+  templates:
+    initial_greeting: "Hey, what's going on? It's [agent_name] down here at [dealership]\
+      \ \nwhere you bought your last car from. I was reviewing your account.\nI need\
+      \ about 30 seconds of your time. It's extremely important.\nCan I get 30 seconds?\n"
+    value_proposition: "If we were willing to offer you more money, more money than\
+      \ what \nyour car was worth, would you mind if I told you how much that was?\n"
+  guidelines:
+    dos:
+    - Ask permission-based questions
+    - Use familiar references
+    - Create urgency without pressure
+    - Tell stories instead of selling features
+    donts:
+    - Start with direct sales questions
+    - Make multiple attempts if customer is firm
+    - Use aggressive or pushy language
+    - Wing it without proper script preparation
+metadata:
+  version: '1.0'
+  timestamp: '2025-01-16T14:58:35.639392'
+  config_type: complete
+  source:
+    analysis: true
+    structured_data: true

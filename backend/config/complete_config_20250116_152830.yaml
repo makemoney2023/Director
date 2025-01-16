@@ -1,0 +1,100 @@
+system:
+  version: 1.0.0
+  environment: production
+  locale: en-US
+  logging:
+    level: INFO
+    format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    file: /var/log/sales-training.log
+voice:
+  tone:
+    base_tone: friendly
+    pitch_range:
+    - 80
+    - 120
+    speaking_rate: 150
+    energy_level: 0.8
+  adaptation:
+    context_awareness: true
+    emotional_mirroring: true
+    pause_threshold: 0.5
+    interruption_sensitivity: 0.7
+training:
+  sales_techniques:
+    permission_based:
+      enabled: true
+      key_phrases:
+      - Can I get 30 seconds?
+      - Would you mind if I told you...?
+      - It's completely your decision
+    value_proposition:
+      enabled: true
+      story_templates:
+      - manager_success_story
+      - lottery_comparison
+      - house_value_analogy
+  objection_handling:
+    max_attempts: 3
+    strategies:
+      redirect_and_reframe:
+        enabled: true
+        confidence_threshold: 0.8
+      value_based_override:
+        enabled: true
+        confidence_threshold: 0.85
+script_templates:
+  initial_greeting: "Hey, what's going on? It's [Name] down here at [Dealership] \n\
+    where you bought your last car from. I was reviewing your account. \nI need about\
+    \ 30 seconds of your time. It's extremely important. \nCan I get 30 seconds?\n"
+conversation_rules:
+  dos:
+  - identify_self
+  - establish_connection
+  - ask_for_time
+  - build_rapport
+  - get_permission
+  donts:
+  - start_with_trade_in
+  - push_after_third_rejection
+  - use_aggressive_language
+  - make_assumptions
+monitoring:
+  metrics:
+    success_rate:
+      threshold: 0.25
+      window: 24h
+    call_duration:
+      min: 30
+      max: 600
+    sentiment_score:
+      min: 0.6
+  alerts:
+    email: alerts@dealership.com
+    threshold_violations:
+      max_consecutive: 3
+      cooldown: 1h
+integration:
+  crm:
+    type: salesforce
+    endpoint: https://api.salesforce.com/v1
+    retry:
+      max_attempts: 3
+      backoff: exponential
+  telephony:
+    provider: twilio
+    region: us-east-1
+    timeout: 30
+  authentication:
+    method: oauth2
+    token_refresh: 1h
+    scope:
+    - calls
+    - contacts
+    - analytics
+metadata:
+  version: '1.0'
+  timestamp: '2025-01-16T15:28:30.125777'
+  config_type: complete
+  source:
+    analysis: true
+    structured_data: true

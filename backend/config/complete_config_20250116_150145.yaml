@@ -1,0 +1,114 @@
+system_settings:
+  environment:
+    name: sales_training_prod
+    version: 1.0.0
+    debug_mode: false
+  performance:
+    max_concurrent_calls: 50
+    response_timeout_ms: 2000
+    memory_limit_mb: 1024
+  logging:
+    level: INFO
+    retention_days: 30
+    path: /var/log/sales-ai/
+voice_parameters:
+  tone:
+    pitch: 1.0
+    speed: 0.95
+    energy: 1.2
+  pacing:
+    words_per_minute: 150
+    pause_short_ms: 300
+    pause_long_ms: 1000
+  adaptation:
+    match_customer_pace: true
+    dynamic_energy: true
+  expressions:
+    emphasis_words:
+    - extremely
+    - important
+    - opportunity
+training_settings:
+  model:
+    base_model: sales-gpt-v2
+    fine_tune_epochs: 50
+    batch_size: 32
+  data_processing:
+    clean_audio: true
+    remove_silence: true
+    normalize_volume: true
+  validation:
+    accuracy_threshold: 0.95
+    confidence_minimum: 0.85
+  quality_checks:
+    professionalism_score: 0.9
+    clarity_score: 0.85
+    engagement_score: 0.8
+sales_scripts:
+  opening:
+    template: 'Hey, what''s going on? It''s {agent_name} down here at {dealership}  where
+      you bought your last car from. I was reviewing your account. I need about 30
+      seconds of your time. It''s extremely important. Can I get 30 seconds?
+
+      '
+  key_phrases:
+    permission_based:
+    - Would you mind if I told you?
+    - Can I get 30 seconds?
+    value_building:
+    - I just want to blow your mind
+    - It's completely your decision
+conversation_flow:
+  stages:
+  - name: introduction
+    required: true
+    max_duration_sec: 30
+  - name: value_proposition
+    required: true
+    max_duration_sec: 60
+  - name: appointment_setting
+    required: true
+    max_duration_sec: 90
+monitoring:
+  metrics:
+    call_success_rate:
+      threshold: 0.6
+      alert_threshold: 0.4
+    appointment_rate:
+      threshold: 0.3
+      alert_threshold: 0.15
+    customer_satisfaction:
+      threshold: 4.0
+      alert_threshold: 3.5
+  alerts:
+    email: alerts@company.com
+    slack_channel: '#sales-ai-alerts'
+  logging:
+    call_recordings: true
+    transcripts: true
+    analytics: true
+integration:
+  crm:
+    type: salesforce
+    endpoint: https://api.salesforce.com/v1/
+    retry_attempts: 3
+    timeout_sec: 30
+  telephony:
+    provider: twilio
+    region: us-east-1
+    fallback_provider: vonage
+  authentication:
+    auth_type: oauth2
+    token_refresh_min: 30
+error_handling:
+  retry_attempts: 3
+  backoff_factor: 1.5
+  max_retry_delay_sec: 300
+  alert_on_failure: true
+metadata:
+  version: '1.0'
+  timestamp: '2025-01-16T15:01:45.081604'
+  config_type: complete
+  source:
+    analysis: true
+    structured_data: true

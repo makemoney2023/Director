@@ -1,138 +1,126 @@
 # Sales Prompt Extractor Agent
 
 ## Overview
-The Sales Prompt Extractor Agent analyzes sales conversations and generates structured data and voice agent prompts. It uses a combination of Anthropic AI for detailed analysis and OpenAI for structured data extraction.
+The Sales Prompt Extractor Agent serves as an orchestrator for a suite of specialized agents that analyze sales conversations and generate sophisticated AI voice agent implementations. It coordinates multiple agents to produce structured data, voice prompts, and training data in various formats optimized for LLM consumption.
 
-## Key Features
-- Sales conversation analysis
-- Structured data extraction
-- Voice agent prompt generation
-- Persistent storage of all components
-- Future integration with voice synthesis
+## Agent Architecture
 
-## Components
+### Core Agents
 
-### SalesAnalysisContent
-Content type for storing sales analysis results:
-```python
-class SalesAnalysisContent(TextContent):
-    analysis_data: Dict = {}  # Structured analysis data
-    anthropic_response: Optional[AnthropicResponse] = None  # Raw Anthropic response
-    voice_prompt: Optional[str] = None  # Generated voice agent prompt
+#### SalesAnalysisAgent
+- Performs detailed analysis of sales conversations
+- Generates markdown-formatted analysis
+- Uses Anthropic API for deep understanding
+- Focuses on sales techniques, communication patterns, and effectiveness
+
+#### VoicePromptGenerationAgent
+- Generates natural, contextual voice prompts
+- Uses Anthropic API for creative generation
+- Adapts to conversation context and style
+- Produces markdown with frontmatter format
+
+#### StructuredDataAgent
+- Creates JSON-formatted structured data
+- Incorporates analysis and voice prompt insights
+- Includes metadata for LLM consumption
+- Optimized for model training and evaluation
+
+#### YAMLConfigurationAgent
+- Generates hierarchical configuration
+- Manages system-wide parameters
+- Provides clear, readable format
+- Supports complex nested structures
+
+#### TrainingPairExtractionAgent
+- Extracts input-output training pairs
+- Includes context and metadata
+- Supports model fine-tuning
+- Provides quality metrics
+
+## Data Formats
+
+### Voice Prompt Format
+```yaml
+metadata:
+  version: "1.0"
+  type: "voice_generation"
+  context: "sales_conversation"
+
+voice_characteristics:
+  tone: "professional_warm"
+  pace: "natural_adaptive"
+  style: "consultative"
+
+conversation_framework:
+  opening:
+    approach: "..."
+    key_elements: [...]
+  discovery:
+    techniques: [...]
+    adaptations: {...}
+  closing:
+    strategies: [...]
+    transitions: {...}
+
+implementation_guidelines:
+  core_principles: [...]
+  adaptation_rules: {...}
+  context_handling: [...]
 ```
 
-### AnthropicResponse
-Model for storing Anthropic API responses:
-```python
-class AnthropicResponse(BaseModel):
-    content: str  # Response content
-    timestamp: datetime  # Response timestamp
-    status: str  # Response status
-    metadata: Dict = {}  # Additional metadata
-```
-
-## Data Structures
-
-### Structured Analysis Data
+### Structured Analysis Format
 ```json
 {
-    "sales_techniques": [
-        {
-            "name": "technique name",
-            "description": "detailed description with examples"
-        }
-    ],
-    "communication_strategies": [
-        {
-            "type": "strategy type",
-            "description": "detailed description with examples"
-        }
-    ],
-    "objection_handling": [
-        {
-            "name": "approach name",
-            "description": "detailed description with examples"
-        }
-    ],
-    "voice_agent_guidelines": [
-        {
-            "name": "guideline name",
-            "description": "detailed description with examples"
-        }
-    ]
+  "analysis": {
+    "techniques": [...],
+    "patterns": [...],
+    "effectiveness": {...}
+  },
+  "metadata": {
+    "model_instructions": "...",
+    "usage_guidelines": "...",
+    "version": "..."
+  }
 }
 ```
 
-### Voice Agent Prompt
-The voice agent prompt follows a structured format:
-```
-SALES CONVERSATION GUIDELINES
-
-CORE OBJECTIVES:
-[List of core objectives]
-
-ETHICAL GUIDELINES:
-[List of ethical guidelines]
-
-AVAILABLE TECHNIQUES AND STRATEGIES:
-[Techniques from analysis]
-[Strategies from analysis]
-[Objection handling from analysis]
-[Voice agent guidelines from analysis]
-
-IMPLEMENTATION GUIDELINES:
-[List of implementation guidelines]
-```
-
-## Usage
-
-### Basic Usage
-```python
-agent = SalesPromptExtractorAgent(session)
-response = agent.run(
-    video_id="video_id",
-    collection_id="collection_id",
-    analysis_type="full",
-    bypass_reasoning=True
-)
-```
-
-### Response Format
-```python
-AgentResponse(
-    status=AgentStatus.SUCCESS,
-    message="Analysis completed successfully",
-    data={
-        "analysis": "Raw analysis text",
-        "voice_prompt": "Formatted voice prompt",
-        "structured_data": {
-            # Structured analysis data
-        }
+### Training Pairs Format
+```json
+{
+  "training_pairs": [
+    {
+      "input": "...",
+      "output": "...",
+      "context": "...",
+      "metadata": {...}
     }
-)
+  ],
+  "quality_metrics": {...}
+}
 ```
 
 ## Integration Points
 
 ### Current Integrations
-- Anthropic AI for conversation analysis
-- OpenAI for structured data extraction
+- Anthropic API for analysis and generation
 - Database for persistent storage
+- Event system for agent communication
 
 ### Future Integrations
 - ElevenLabs for voice synthesis
 - Real-time voice agent interaction
-- Analytics and performance tracking
+- Advanced pathway management
+- Cross-agent communication framework
 
 ## Error Handling
-- Retry mechanism for API calls
-- Error storage in database
-- Detailed error logging
-- Fallback responses
+- Comprehensive error capture
+- Cross-agent error propagation
+- Fallback mechanisms
+- Detailed logging
 
 ## Configuration
 ```python
-SALES_PROMPT_PARAMETERS = {
+AGENT_PARAMETERS = {
     "type": "object",
     "properties": {
         "video_id": {"type": "string"},
@@ -146,6 +134,26 @@ SALES_PROMPT_PARAMETERS = {
             "enum": ["structured", "text", "both"]
         }
     },
-    "required": ["video_id", "collection_id"],
-    "bypass_reasoning": True
-} 
+    "required": ["video_id", "collection_id"]
+}
+```
+
+## Usage Examples
+
+### Basic Usage
+```python
+extractor = SalesPromptExtractorAgent(session)
+response = extractor.run(
+    video_id="video_id",
+    collection_id="collection_id",
+    analysis_type="full"
+)
+```
+
+### Advanced Usage
+```python
+# Access individual agents
+analysis = extractor.analysis_agent.analyze(video_id)
+voice_prompt = extractor.voice_agent.generate(analysis)
+structured_data = extractor.structured_agent.process(analysis, voice_prompt)
+```

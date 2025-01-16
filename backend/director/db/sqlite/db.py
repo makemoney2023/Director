@@ -23,10 +23,22 @@ class SQLiteDB(BaseDB):
             self.db_path = os.getenv("SQLITE_DB_PATH", "director.db")
         else:
             self.db_path = db_path
-        self.conn = sqlite3.connect(self.db_path, check_same_thread=True)
+        
+        # Configure SQLite for multi-threaded access
+        self.conn = sqlite3.connect(
+            self.db_path,
+            check_same_thread=False,  # Allow multi-threaded access
+            timeout=30.0,  # Increase timeout for busy connections
+            isolation_level='IMMEDIATE'  # Use immediate transaction isolation
+        )
         self.conn.row_factory = sqlite3.Row
+        
+        # Enable WAL mode for better concurrency
+        self.conn.execute('PRAGMA journal_mode=WAL')
+        self.conn.execute('PRAGMA busy_timeout=30000')  # 30 second timeout
+        
         self.cursor = self.conn.cursor()
-        logger.info("Connected to SQLite DB...")
+        logger.info("Connected to SQLite DB with multi-threading support...")
 
     def create_session(
         self,

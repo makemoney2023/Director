@@ -9,14 +9,18 @@ dependencies = [
     "flask-socketio==5.3.6",
     "flask-cors==4.0.1",
     "openai==1.55.3",
+    "openai_function_calling>=0.1.0",
+    "anthropic>=0.3.0",
+    "tenacity>=8.0.0",
+    "replicate>=0.8.0",
+    "elevenlabs>=0.2.0",
+    "Pillow>=10.0.0",
     "pydantic==2.8.2",
     "pydantic-settings==2.4.0",
     "python-dotenv==1.0.1",
     "videodb",
-    "yt-dlp==2024.10.7",
-    "director",
+    "yt-dlp==2024.10.7"
 ]
-
 
 [build-system]
 requires = ["setuptools>=61.0"]

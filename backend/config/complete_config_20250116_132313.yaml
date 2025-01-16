@@ -1,0 +1,115 @@
+metadata:
+  version: '1.0'
+  timestamp: '2025-01-16T13:23:13.546498'
+  config_type: complete
+  source:
+    analysis: true
+    structured_data: true
+system_settings:
+  environment:
+    mode: production
+    debug: false
+    timeout_seconds: 30
+    max_retries: 3
+  logging:
+    level: INFO
+    format: detailed
+    retention_days: 30
+    paths:
+      main: /var/log/sales-ai/main.log
+      errors: /var/log/sales-ai/errors.log
+voice_parameters:
+  tone:
+    primary: confident_friendly
+    secondary: professional_casual
+    baseline_pitch: 220
+    variability: 0.2
+  pacing:
+    default_speed: moderate
+    ranges:
+      slow: 130
+      moderate: 150
+      fast: 180
+    key_moments:
+      value_proposition: slightly_slower
+      objection_handling: measured_pace
+  adaptation:
+    customer_mood_detection: true
+    response_adjustments:
+      skeptical: increase_warmth
+      interested: maintain_enthusiasm
+      negative: increase_empathy
+training_settings:
+  conversation_flow:
+    opening:
+      template: Hey, what's going on? It's [Name] down here at [Dealership]
+      timing_seconds: 3
+      tone: friendly_professional
+    value_build:
+      sequence:
+      - establish_connection
+      - request_time
+      - present_value
+      - set_appointment
+  success_metrics:
+    targets:
+      appointment_set_rate: 0.3
+      positive_engagement: 0.8
+      objection_resolution: 0.6
+  key_phrases:
+    permission_based:
+    - Would you mind if I told you...?
+    - It's completely your decision
+    - I just want to blow your mind
+    - Can I get 30 seconds?
+objection_handling:
+  responses:
+    love_current_car:
+      approach: value_comparison
+      script: If your house is worth $100,000 and someone is going to give you 500
+        grand for it...
+    retired:
+      approach: opportunity_framing
+      script: Have you ever won the lottery? You just have.
+    no_time:
+      approach: brief_value
+      script: I only need 30 seconds to share something important...
+monitoring:
+  metrics:
+    collection_interval: 60
+    retention_period: 90
+  alerts:
+    success_rate:
+      warning_threshold: 0.25
+      critical_threshold: 0.15
+    response_time:
+      warning_ms: 500
+      critical_ms: 1000
+  reporting:
+    daily_summary: true
+    weekly_analysis: true
+    format: detailed_csv
+integration:
+  apis:
+    crm:
+      endpoint: https://api.crm.example.com/v1
+      timeout: 5000
+      retry_attempts: 3
+    analytics:
+      endpoint: https://analytics.example.com/v2
+      batch_size: 100
+      flush_interval: 300
+  authentication:
+    method: oauth2
+    token_refresh_minutes: 55
+    credentials_path: /etc/sales-ai/credentials.json
+security:
+  encryption:
+    algorithm: AES-256
+    key_rotation_days: 30
+  access_control:
+    role_based: true
+    default_role: agent
+    admin_ips:
+    - 10.0.0.0/24
+    - 192.168.1.0/24

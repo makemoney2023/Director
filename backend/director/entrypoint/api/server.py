@@ -1,9 +1,13 @@
+import os
+import sys
 import logging
 import logging.config
-import os
 from dotenv import load_dotenv
 from director.entrypoint.api import create_app
 from director.entrypoint.api.config import configs
+from director.core.database import init_db
+from flask import Flask
+from flask_socketio import SocketIO
 
 load_dotenv()
 
@@ -32,7 +36,7 @@ DEFAULT_LOGGING_CONFIG = {
 logging.config.dictConfig(DEFAULT_LOGGING_CONFIG)
 logger = logging.getLogger(__name__)
 
-# By default, the server is configured to run in development mode. To run in production mode, set the `SERVER_ENV` environment variable to `production`.
+# Create the Flask application
 app = create_app(app_config=configs[os.getenv("SERVER_ENV", "local")])
 
 if __name__ == "__main__":
@@ -41,5 +45,6 @@ if __name__ == "__main__":
         app,
         host=os.getenv("SERVER_HOST", app.config["HOST"]),
         port=os.getenv("SERVER_PORT", app.config["PORT"]),
-        debug=app.config["DEBUG"]
+        debug=app.config["DEBUG"],
+        use_reloader=True
     )

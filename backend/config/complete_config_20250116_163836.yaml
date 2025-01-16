@@ -1,0 +1,101 @@
+system:
+  name: HVAC Sales Training Assistant
+  version: 1.0.0
+  environment: production
+  logging:
+    level: INFO
+    format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    file: /var/log/sales-training.log
+voice:
+  tone:
+    base_tone: friendly_professional
+    pitch_range: 0.8
+    speaking_rate: 1.1
+  adaptation:
+    match_customer_pace: true
+    mirror_energy_level: true
+  expressions:
+    emphasis_words:
+    - save
+    - free
+    - better
+    - new
+    pause_markers:
+    - '...'
+    - ','
+    - .
+training:
+  sales_techniques:
+    positioning:
+      rules:
+      - Always present numbers while seated
+      - Sit beside customer, not across
+      - Maintain comfortable knee-to-knee position
+      trigger_phrases:
+      - Let me show you some numbers
+      - Can we sit down to review this?
+    opening_patterns:
+      permission_questions:
+      - If I see any concerning issues, would you want me to let you know?
+      - Would it be okay if I shared some additional options?
+    objection_handling:
+      company_longevity:
+        response_template: 'Would you prefer working with someone using the latest
+          technology  that lasts longer, or older technology from older companies?
+
+          '
+      cost_justification:
+        calculation_method: monthly_savings
+        threshold_savings: 100
+        emphasis_points:
+        - Current spending vs proposed savings
+        - System paying for itself
+        - Long-term value proposition
+monitoring:
+  metrics:
+  - name: conversation_success_rate
+    threshold: 0.75
+    alert_on: below
+  - name: customer_satisfaction
+    threshold: 4.5
+    alert_on: below
+  - name: conversion_rate
+    threshold: 0.25
+    alert_on: below
+integration:
+  crm:
+    type: salesforce
+    endpoint: https://api.salesforce.com/v1
+    retry:
+      max_attempts: 3
+      backoff_factor: 2
+  analytics:
+    tracking:
+      conversation_metrics: true
+      customer_feedback: true
+      sales_outcomes: true
+scripts:
+  key_phrases:
+  - text: If I see anything concerning, would you want me to let you know?
+    context: opening
+  - text: Where can we sit down so I can explain this clearly?
+    context: positioning
+  - text: You're already spending the money, now you're saving money
+    context: justification
+quality_control:
+  minimum_confidence: 0.85
+  required_elements:
+  - permission_asking
+  - proper_positioning
+  - cost_justification
+  forbidden_phrases:
+  - high pressure
+  - limited time
+  - must decide now
+metadata:
+  version: '1.0'
+  timestamp: '2025-01-16T16:38:36.462126'
+  config_type: complete
+  source:
+    analysis: true
+    structured_data: true

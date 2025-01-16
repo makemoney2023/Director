@@ -116,7 +116,8 @@ class ChatHandler:
                     collection_id=session.collection_id,
                     bypass_reasoning=True
                 )
-                session.output_message.content.append(response.data.get("analysis", ""))
+                # The response is already an OutputMessage, so we just use it directly
+                session.output_message = response
                 session.output_message.status = MsgStatus.success
                 session.output_message.publish()
             else:

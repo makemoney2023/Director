@@ -1,0 +1,95 @@
+system_settings:
+  environment:
+    name: sales_training
+    version: 1.0.0
+    mode: production
+    debug: false
+  performance:
+    max_response_time: 500
+    concurrent_sessions: 50
+    memory_limit: 4GB
+  logging:
+    level: INFO
+    format: json
+    retention_days: 30
+voice_parameters:
+  tone:
+    base_pitch: 220
+    variation_range: 20
+    tempo: moderate
+    energy: high
+  expression:
+    confidence_level: 0.8
+    friendliness: 0.9
+    professionalism: 0.85
+  adaptation:
+    match_customer_pace: true
+    dynamic_volume: true
+training_settings:
+  script_templates:
+    intro: 'Hey, what''s going on? It''s [NAME] down here at [DEALERSHIP]  where you
+      bought your last car from. I was reviewing your account. I need about 30 seconds
+      of your time. It''s extremely important. Can I get 30 seconds?
+
+      '
+  sales_techniques:
+    permission_based:
+      enabled: true
+      min_confidence: 0.85
+    value_framing:
+      enabled: true
+      examples:
+      - house_value_analogy
+      - time_value_proposition
+  objection_handling:
+    strategies:
+    - redirect_and_reframe
+    - value_based_override
+    - story_based_response
+  success_metrics:
+    appointment_rate: 0.3
+    engagement_duration: 120
+    positive_response_rate: 0.6
+integration:
+  api:
+    endpoint: https://api.salesai.com/v1
+    timeout: 5000
+    retry_attempts: 3
+  authentication:
+    method: OAuth2
+    client_id: ${CLIENT_ID}
+    client_secret: ${CLIENT_SECRET}
+  rate_limiting:
+    max_calls_per_minute: 100
+    burst_limit: 150
+monitoring:
+  metrics:
+  - name: response_time
+    threshold: 500
+    alert: true
+  - name: success_rate
+    threshold: 0.85
+    alert: true
+  - name: engagement_score
+    threshold: 0.7
+    alert: false
+  quality_checks:
+    voice_clarity: 0.95
+    script_adherence: 0.9
+    proper_framing: 0.85
+  alerts:
+    channels:
+    - email
+    - slack
+    threshold_breach_delay: 300
+  reporting:
+    frequency: hourly
+    format: dashboard
+    retention_period: 90
+metadata:
+  version: '1.0'
+  timestamp: '2025-01-16T14:30:27.344674'
+  config_type: complete
+  source:
+    analysis: true
+    structured_data: true

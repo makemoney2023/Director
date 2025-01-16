@@ -10,7 +10,6 @@ from flask_cors import CORS
 from flask import Flask
 from flask_socketio import SocketIO
 from logging.config import dictConfig
-import asyncio
 
 from director.entrypoint.api.routes import agent_bp, session_bp, videodb_bp, config_bp
 from director.entrypoint.api.socket_io import ChatNamespace
@@ -21,8 +20,7 @@ load_dotenv()
 
 socketio = SocketIO()
 
-
-def create_app(app_config: object):
+def create_app(app_config=None):
     """
     Create a Flask app using the app factory pattern.
 
@@ -31,20 +29,22 @@ def create_app(app_config: object):
     """
     app = Flask(__name__)
 
-    # Set the app config
-    app.config.from_object(app_config)
-    app.config.from_prefixed_env(app_config.ENV_PREFIX)
-    CORS(app)
+    if app_config:
+        app.config.from_object(app_config)
 
-    # Init the socketio and attach it to the app
+    # Initialize SocketIO with threading
     socketio.init_app(
         app,
+        async_mode='threading',
         cors_allowed_origins="*",
         logger=True,
         engineio_logger=True,
-        reconnection=True
+        ping_timeout=60
     )
     app.socketio = socketio
+
+    # Enable CORS
+    CORS(app)
 
     # Set the logging config
     dictConfig(app.config["LOGGING_CONFIG"])

@@ -1,0 +1,97 @@
+system:
+  environment:
+    name: auto-sales-ai
+    version: 1.0.0
+    mode: production
+  performance:
+    concurrent_calls: 10
+    calls_per_minute: 30
+    max_call_duration_seconds: 300
+  logging:
+    level: INFO
+    retention_days: 30
+    metrics_enabled: true
+voice:
+  tone:
+    base_tone: professional_friendly
+    pitch_range:
+    - 0.8
+    - 1.2
+    speaking_rate: 1.0
+    volume: 0.8
+  adaptation:
+    match_customer_pace: true
+    adjust_tone_on_emotion: true
+    pause_after_questions_ms: 1000
+  expressions:
+    emphasis_words:
+    - extremely important
+    - thirty seconds
+    - reviewing your account
+training:
+  model:
+    base_model: sales-gpt-4
+    fine_tune_epochs: 100
+    batch_size: 32
+    learning_rate: 0.0001
+  data:
+    source_files:
+    - sales_scripts.json
+    - objection_handling.json
+    validation_split: 0.2
+    min_confidence_threshold: 0.85
+scripts:
+  opening:
+    template: 'Hey, what''s going on? It''s {agent_name} down here at {dealership}  where
+      you bought your last car from. I was reviewing your account.  I need about 30
+      seconds of your time. It''s extremely important.  Can I get 30 seconds?
+
+      '
+  objection_handling:
+    love_car:
+      trigger: love my car
+      response: That's why you want to capitalize on this market.
+    not_interested:
+      trigger: not interested
+      response: Have a blessed day. Thank you so much for your time. You're a valued
+        customer.
+monitoring:
+  metrics:
+    track:
+    - calls_per_hour
+    - conversion_rate
+    - avg_call_duration
+    - objection_handling_success
+  alerts:
+    conversion_threshold: 0.15
+    error_rate_threshold: 0.05
+  quality:
+    record_calls: true
+    sampling_rate: 0.1
+    min_quality_score: 0.8
+integration:
+  crm:
+    type: salesforce
+    endpoint: https://api.salesforce.com/v1
+    retry_attempts: 3
+    timeout_seconds: 30
+  telephony:
+    provider: twilio
+    region: us-east-1
+    channels: 20
+    recording_enabled: true
+security:
+  encryption:
+    algorithm: AES-256
+    key_rotation_days: 30
+  authentication:
+    method: OAuth2
+    token_expiry_hours: 24
+    refresh_enabled: true
+metadata:
+  version: '1.0'
+  timestamp: '2025-01-16T14:54:12.308635'
+  config_type: complete
+  source:
+    analysis: true
+    structured_data: true
