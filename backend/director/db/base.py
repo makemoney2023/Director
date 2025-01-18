@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from typing import List, Dict, Optional
 
 
 class BaseDB(ABC):
@@ -46,4 +47,38 @@ class BaseDB(ABC):
     @abstractmethod
     def health_check(self) -> bool:
         """Check if the database is healthy."""
+        pass
+
+    @abstractmethod
+    def add_analysis_result(
+        self,
+        analysis_id: str,
+        session_id: str,
+        video_id: str,
+        analysis_type: str,
+        sales_techniques: List[dict],
+        objection_handling: List[dict],
+        voice_prompts: List[str],
+        training_pairs: List[dict],
+        summary: str,
+        created_at: int = None,
+        updated_at: int = None,
+        metadata: dict = {},
+    ) -> None:
+        """Add or update an analysis result."""
+        pass
+
+    @abstractmethod
+    def get_analysis_result(self, analysis_id: str) -> Optional[Dict]:
+        """Get an analysis result by ID."""
+        pass
+
+    @abstractmethod
+    def get_session_analysis_results(self, session_id: str) -> List[Dict]:
+        """Get all analysis results for a session."""
+        pass
+
+    @abstractmethod
+    def delete_analysis_result(self, analysis_id: str) -> bool:
+        """Delete an analysis result."""
         pass

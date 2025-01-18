@@ -7,12 +7,14 @@ from director.db import load_db
 from director.handler import ChatHandler, SessionHandler, VideoDBHandler, ConfigHandler
 from director.agents.sales_prompt_extractor import SalesPromptExtractorAgent
 from director.core.session import Session
+from director.integrations.bland_ai.handler import BlandAIIntegrationHandler
 
 
 agent_bp = Blueprint("agent", __name__, url_prefix="/agent")
 session_bp = Blueprint("session", __name__, url_prefix="/session")
 videodb_bp = Blueprint("videodb", __name__, url_prefix="/videodb")
 config_bp = Blueprint("config", __name__, url_prefix="/config")
+bland_ai_bp = Blueprint("bland-ai", __name__, url_prefix="/api/v1/bland-ai")
 
 
 @agent_bp.route("/", methods=["GET"], strict_slashes=False)
@@ -178,3 +180,53 @@ def upload_video(collection_id):
 def config_check():
     config_handler = ConfigHandler()
     return config_handler.check()
+
+
+@bland_ai_bp.route("/process-recording", methods=["POST"])
+async def process_recording():
+    """Process a sales recording and create a new Bland AI pathway"""
+    try:
+        data = request.get_json()
+        handler = BlandAIIntegrationHandler(app.config)
+        result = await handler.process_sales_recording(recording_data=data)
+        return result
+    except Exception as e:
+        return {"message": str(e)}, 500
+
+
+@bland_ai_bp.route("/update-pathway", methods=["POST"])
+async def update_pathway():
+    """Update an existing Bland AI pathway with new sales recording data"""
+    try:
+        data = request.get_json()
+        handler = BlandAIIntegrationHandler(app.config)
+        result = await handler.process_sales_recording(
+            recording_data=data["recording_data"],
+            update_existing=True,
+            pathway_id=data["pathway_id"]
+        )
+        return result
+    except Exception as e:
+        return {"message": str(e)}, 500
+
+
+@bland_ai_bp.route("/pathways", methods=["GET"])
+async def list_pathways():
+    """Get list of available Bland AI pathways"""
+    try:
+        handler = BlandAIIntegrationHandler(app.config)
+        pathways = await handler.list_available_pathways()
+        return pathways
+    except Exception as e:
+        return {"message": str(e)}, 500
+
+
+@bland_ai_bp.route("/pathways/<pathway_id>/stats", methods=["GET"])
+async def get_pathway_stats(pathway_id):
+    """Get statistics about a specific pathway"""
+    try:
+        handler = BlandAIIntegrationHandler(app.config)
+        stats = await handler.get_pathway_stats(pathway_id)
+        return stats
+    except Exception as e:
+        return {"message": str(e)}, 500

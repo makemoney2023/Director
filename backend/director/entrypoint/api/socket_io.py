@@ -2,6 +2,7 @@ import os
 from datetime import datetime
 import logging
 import time
+from typing import Dict, Optional
 
 from flask import current_app
 from flask_socketio import Namespace, emit
@@ -179,3 +180,34 @@ class ChatNamespace(Namespace):
                 }
             }
             self.emit("chat", error_response, namespace=self.namespace)
+
+    def _get_agent_response(self, message: Dict) -> Optional[Dict]:
+        """Get response from appropriate agent based on message"""
+        
+        # Get the first agent from the list
+        agent_name = message.get("agents", [])[0] if message.get("agents") else None
+        
+        # Handle special cases that bypass the reasoning engine
+        if agent_name in ["sales_prompt_extractor", "bland_ai"]:
+            # Get the command from the text content
+            text = message.get("content", [{}])[0].get("text", "")
+            
+            # For sales prompt extractor, always use "analyze"
+            if agent_name == "sales_prompt_extractor":
+                command = "analyze"
+            else:
+                # For bland_ai, parse the command after @bland_ai
+                command = text.replace("@bland_ai", "").strip()
+            
+            # Create agent instance
+            agent = self.chat_handler.get_agent(
+                agent_name,
+                session=self.session,
+                input_message=message
+            )
+            
+            if not agent:
+                return None
+                
+            # Run the agent with the command
+            return agent.run(command)

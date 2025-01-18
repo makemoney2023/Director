@@ -4,7 +4,7 @@ import time
 import logging
 import os
 
-from typing import List
+from typing import List, Optional
 
 from director.constants import DBType
 from director.db.base import BaseDB
@@ -259,15 +259,33 @@ class SQLiteDB(BaseDB):
         :return: True if the session was deleted, False otherwise.
         """
         failed_components = []
+        
+        # Delete conversations
         if not self.delete_conversation(session_id):
             failed_components.append("conversation")
+            
+        # Delete context messages
         if not self.delete_context(session_id):
             failed_components.append("context")
-        self.cursor.execute("DELETE FROM sessions WHERE session_id = ?", (session_id,))
+            
+        # Delete analysis results
+        self.cursor.execute(
+            "DELETE FROM analysis_results WHERE session_id = ?",
+            (session_id,)
+        )
+        if not self.cursor.rowcount > 0:
+            failed_components.append("analysis_results")
+            
+        # Delete session
+        self.cursor.execute(
+            "DELETE FROM sessions WHERE session_id = ?",
+            (session_id,)
+        )
         self.conn.commit()
         if not self.cursor.rowcount > 0:
             failed_components.append("session")
-        success = len(failed_components) < 3
+            
+        success = len(failed_components) < 4
         return success, failed_components
 
     def health_check(self) -> bool:
@@ -289,6 +307,136 @@ class SQLiteDB(BaseDB):
         except Exception as e:
             logger.exception(f"SQLite health check failed: {e}")
             return False
+
+    def add_analysis_result(
+        self,
+        analysis_id: str,
+        session_id: str,
+        video_id: str,
+        analysis_type: str,
+        sales_techniques: List[dict],
+        objection_handling: List[dict],
+        voice_prompts: List[str],
+        training_pairs: List[dict],
+        summary: str,
+        created_at: int = None,
+        updated_at: int = None,
+        metadata: dict = {},
+    ) -> None:
+        """Add or update an analysis result.
+        
+        Args:
+            analysis_id: Unique ID for the analysis
+            session_id: ID of the session
+            video_id: ID of the video analyzed
+            analysis_type: Type of analysis performed
+            sales_techniques: List of extracted sales techniques
+            objection_handling: List of objection handling strategies
+            voice_prompts: List of voice prompts
+            training_pairs: List of training pairs
+            summary: Summary of the analysis
+            created_at: Creation timestamp
+            updated_at: Update timestamp
+            metadata: Additional metadata
+        """
+        created_at = created_at or int(time.time())
+        updated_at = updated_at or int(time.time())
+
+        self.cursor.execute(
+            """
+            INSERT OR REPLACE INTO analysis_results 
+            (analysis_id, session_id, video_id, analysis_type, sales_techniques, 
+             objection_handling, voice_prompts, training_pairs, summary, 
+             created_at, updated_at, metadata)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                analysis_id,
+                session_id,
+                video_id,
+                analysis_type,
+                json.dumps(sales_techniques),
+                json.dumps(objection_handling),
+                json.dumps(voice_prompts),
+                json.dumps(training_pairs),
+                summary,
+                created_at,
+                updated_at,
+                json.dumps(metadata),
+            ),
+        )
+        self.conn.commit()
+
+    def get_analysis_result(self, analysis_id: str) -> Optional[dict]:
+        """Get an analysis result by ID.
+        
+        Args:
+            analysis_id: ID of the analysis to retrieve
+            
+        Returns:
+            Dict containing the analysis data or None if not found
+        """
+        self.cursor.execute(
+            "SELECT * FROM analysis_results WHERE analysis_id = ?",
+            (analysis_id,)
+        )
+        row = self.cursor.fetchone()
+        
+        if row is not None:
+            result = dict(row)
+            # Parse JSON fields
+            result["sales_techniques"] = json.loads(result["sales_techniques"])
+            result["objection_handling"] = json.loads(result["objection_handling"])
+            result["voice_prompts"] = json.loads(result["voice_prompts"])
+            result["training_pairs"] = json.loads(result["training_pairs"])
+            result["metadata"] = json.loads(result["metadata"])
+            return result
+            
+        return None
+
+    def get_session_analysis_results(self, session_id: str) -> List[dict]:
+        """Get all analysis results for a session.
+        
+        Args:
+            session_id: ID of the session
+            
+        Returns:
+            List of analysis results
+        """
+        self.cursor.execute(
+            "SELECT * FROM analysis_results WHERE session_id = ? ORDER BY created_at DESC",
+            (session_id,)
+        )
+        rows = self.cursor.fetchall()
+        
+        results = []
+        for row in rows:
+            result = dict(row)
+            # Parse JSON fields
+            result["sales_techniques"] = json.loads(result["sales_techniques"])
+            result["objection_handling"] = json.loads(result["objection_handling"])
+            result["voice_prompts"] = json.loads(result["voice_prompts"])
+            result["training_pairs"] = json.loads(result["training_pairs"])
+            result["metadata"] = json.loads(result["metadata"])
+            results.append(result)
+            
+        return results
+
+    def delete_analysis_result(self, analysis_id: str) -> bool:
+        """Delete an analysis result.
+        
+        Args:
+            analysis_id: ID of the analysis to delete
+            
+        Returns:
+            True if deleted, False if not found
+        """
+        self.cursor.execute(
+            "DELETE FROM analysis_results WHERE analysis_id = ?",
+            (analysis_id,)
+        )
+        self.conn.commit()
+        return self.cursor.rowcount > 0
 
     def __del__(self):
         self.conn.close()

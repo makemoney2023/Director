@@ -43,6 +43,24 @@ CREATE TABLE IF NOT EXISTS context_messages (
 )
 """
 
+# SQL to create the analysis_results table
+CREATE_ANALYSIS_RESULTS_TABLE = """
+CREATE TABLE IF NOT EXISTS analysis_results (
+    analysis_id TEXT PRIMARY KEY,
+    session_id TEXT,
+    video_id TEXT,
+    analysis_type TEXT,
+    sales_techniques JSON,
+    objection_handling JSON,
+    voice_prompts JSON,
+    training_pairs JSON,
+    summary TEXT,
+    created_at INTEGER,
+    updated_at INTEGER,
+    metadata JSON,
+    FOREIGN KEY (session_id) REFERENCES sessions(session_id)
+)
+"""
 
 def initialize_sqlite(db_name="director.db"):
     """Initialize the SQLite database by creating the necessary tables."""
@@ -52,6 +70,7 @@ def initialize_sqlite(db_name="director.db"):
     cursor.execute(CREATE_SESSIONS_TABLE)
     cursor.execute(CREATE_CONVERSATIONS_TABLE)
     cursor.execute(CREATE_CONTEXT_MESSAGES_TABLE)
+    cursor.execute(CREATE_ANALYSIS_RESULTS_TABLE)
 
     conn.commit()
     conn.close()

@@ -26,9 +26,10 @@ from director.agents.transcription import TranscriptionAgent
 from director.agents.comparison import ComparisonAgent
 from director.agents.web_search_agent import WebSearchAgent
 from director.agents.sales_prompt_extractor import SalesPromptExtractorAgent
+from director.agents.bland_ai_agent import BlandAI_Agent
 
 
-from director.core.session import Session, InputMessage, MsgStatus
+from director.core.session import Session, InputMessage, MsgStatus, TextContent
 from director.core.reasoning import ReasoningEngine
 from director.db.base import BaseDB
 from director.db import load_db
@@ -68,6 +69,7 @@ class ChatHandler:
             ComparisonAgent,
             WebSearchAgent,
             SalesPromptExtractorAgent,
+            BlandAI_Agent,
         ]
 
     def add_videodb_state(self, session):
@@ -108,18 +110,74 @@ class ChatHandler:
             agents_mapping = {agent.name: agent for agent in agents}
 
             # Check if we should bypass reasoning engine
-            if input_message.agents and len(input_message.agents) == 1 and input_message.agents[0] == "sales_prompt_extractor":
-                # Direct agent call for sales_prompt_extractor
-                agent = agents_mapping["sales_prompt_extractor"]
-                response = agent.run(
-                    video_id=session.video_id,
-                    collection_id=session.collection_id,
-                    bypass_reasoning=True
-                )
-                # The response is already an OutputMessage, so we just use it directly
-                session.output_message = response
-                session.output_message.status = MsgStatus.success
-                session.output_message.publish()
+            if input_message.agents and len(input_message.agents) == 1:
+                agent_name = input_message.agents[0]
+                if agent_name == "sales_prompt_extractor":
+                    # Direct agent call for sales_prompt_extractor
+                    agent = agents_mapping["sales_prompt_extractor"]
+                    response = agent.run(
+                        video_id=session.video_id,
+                        collection_id=session.collection_id,
+                        bypass_reasoning=True
+                    )
+                    # The response is already an OutputMessage, so we just use it directly
+                    session.output_message = response
+                    session.output_message.status = MsgStatus.success
+                    session.output_message.publish()
+                elif agent_name == "bland_ai":
+                    # Direct agent call for bland_ai
+                    agent = agents_mapping["bland_ai"]
+                    # Parse the command from the message text
+                    text = message.get("text", "").strip()
+                    if text.startswith("@bland_ai"):
+                        # Extract command and parameters
+                        parts = text[len("@bland_ai"):].strip().split()
+                        if not parts:
+                            # No command provided, return help message
+                            help_message = (
+                                "Available commands:\n"
+                                "- create_empty name=\"Name\" description=\"Description\": Create a new empty pathway\n"
+                                "- update name=\"Name\": Update a pathway with latest analysis\n"
+                                "- list: List all available pathways\n"
+                                "- stats pathway_id=ID: Get statistics for a pathway"
+                            )
+                            session.output_message.content.append(TextContent(
+                                agent_name="bland_ai",
+                                status=MsgStatus.success,
+                                status_message="Help information",
+                                text=help_message
+                            ))
+                            session.output_message.status = MsgStatus.success
+                            session.output_message.publish()
+                            return session.output_message.model_dump()
+                            
+                        command = parts[0]
+                        params = {}
+                        for part in parts[1:]:
+                            if "=" in part:
+                                key, value = part.split("=", 1)
+                                # Remove quotes if present
+                                value = value.strip('"\'')
+                                params[key] = value
+                        
+                        # Run the agent with parsed parameters
+                        response = agent.run(
+                            command=command,
+                            **params
+                        )
+                        # The response is already an OutputMessage, so we just use it directly
+                        session.output_message = response
+                        session.output_message.status = MsgStatus.success
+                        session.output_message.publish()
+                else:
+                    # Use reasoning engine for all other cases
+                    res_eng = ReasoningEngine(input_message=input_message, session=session)
+                    if input_message.agents:
+                        for agent_name in input_message.agents:
+                            res_eng.register_agents([agents_mapping[agent_name]])
+                    else:
+                        res_eng.register_agents(agents)
+                    res_eng.run()
             else:
                 # Use reasoning engine for all other cases
                 res_eng = ReasoningEngine(input_message=input_message, session=session)
