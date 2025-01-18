@@ -1,6 +1,6 @@
 from enum import Enum
 from datetime import datetime
-from typing import Optional, List, Union
+from typing import Optional, List, Union, Dict
 
 from flask_socketio import emit
 from pydantic import BaseModel, Field, ConfigDict
@@ -65,6 +65,17 @@ class TextContent(BaseContent):
 
     text: str = ""
     type: ContentType = ContentType.text
+    yaml_data: Optional[Dict] = None
+    config_metadata: Optional[Dict] = None
+
+    def to_dict(self) -> Dict:
+        """Convert to dictionary"""
+        base_dict = super().to_dict()
+        if self.yaml_data:
+            base_dict["yaml_data"] = self.yaml_data
+        if self.config_metadata:
+            base_dict["config_metadata"] = self.config_metadata
+        return base_dict
 
 
 class VideoData(BaseModel):

@@ -324,192 +324,208 @@ Remember to:
             raise ValueError(f"YAML validation failed: {str(e)}")
 
     def _generate_yaml_config(self, analysis: str, structured_data: Dict) -> str:
-        """Generate YAML configuration from analysis and structured data"""
+        """Generate YAML configuration from analysis and structured data using OpenAI's function calling"""
         try:
-            # Extract voice patterns and guidelines
-            voice_guidelines = structured_data.get("voice_agent_guidelines", [])
-            sales_techniques = structured_data.get("sales_techniques", [])
-            communication_strategies = structured_data.get("communication_strategies", [])
-            
-            # Build base configuration with required sections
-            config = {
-                "metadata": {
-                    "version": "1.0",
-                    "type": "voice_agent_config",
-                    "description": "AI Voice Sales Agent Configuration",
-                    "last_updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                },
-                "voice_settings": {
-                    "tone": {
-                        "base_tone": "professional and confident",
-                        "variations": ["empathetic", "authoritative", "consultative"],
-                        "adaptations": {
-                            "objection_handling": "empathetic but firm",
-                            "value_presentation": "enthusiastic and confident",
-                            "closing": "assertive yet supportive"
-                        }
-                    },
-                    "pacing": {
-                        "base_speed": "moderate",
-                        "dynamic_range": ["slow", "moderate", "quick"],
-                        "situational_adjustments": {
-                            "complex_information": "slower",
-                            "rapport_building": "moderate",
-                            "closing": "measured and deliberate"
-                        }
-                    },
-                    "expression": {
-                        "emphasis_patterns": ["key benefits", "value propositions", "urgency signals"],
-                        "emotional_markers": ["confidence", "empathy", "enthusiasm"],
-                        "pause_points": ["after key points", "before important questions", "during value statements"]
-                    },
-                    "adaptation": {
-                        "customer_matching": True,
-                        "context_sensitivity": True,
-                        "emotional_mirroring": True,
-                        "response_calibration": {
-                            "to_objections": "measured and understanding",
-                            "to_interest": "engaged and encouraging",
-                            "to_hesitation": "patient and supportive"
-                        }
-                    }
-                },
-                "conversation_framework": {
-                    "opening": {
-                        "approach": "professional and warm",
-                        "key_elements": ["self-introduction", "rapport building", "purpose statement"],
-                        "timing": "first 30 seconds"
-                    },
-                    "discovery": {
-                        "question_types": ["open-ended", "probing", "confirming"],
-                        "focus_areas": ["needs", "preferences", "constraints"],
-                        "techniques": []
-                    },
-                    "presentation": {
-                        "structure": ["benefit", "feature", "value"],
-                        "emphasis": "customer-specific value",
-                        "techniques": []
-                    },
-                    "objection_handling": {
-                        "approach": "listen-acknowledge-respond",
-                        "key_principles": ["empathy", "redirection", "value focus"],
-                        "responses": {}
-                    },
-                    "closing": {
-                        "style": "confident and assumptive",
-                        "techniques": [],
-                        "timing_triggers": ["positive signals", "value agreement", "concern resolution"]
-                    }
-                },
-                "communication_patterns": {
-                    "power_phrases": [],
-                    "transition_phrases": [],
-                    "emphasis_patterns": [],
-                    "response_templates": {}
-                },
-                "behavioral_guidelines": {
-                    "core_principles": [],
-                    "do": [],
-                    "dont": [],
-                    "adaptations": {
-                        "to_customer_style": True,
-                        "to_conversation_stage": True,
-                        "to_emotional_state": True
-                    }
-                },
-                "quality_thresholds": {
-                    "response_time": {
-                        "standard": "2-3 seconds",
-                        "max_pause": "5 seconds",
-                        "min_pause": "1 second"
-                    },
-                    "speech_metrics": {
-                        "clarity": {
-                            "target": "95%",
-                            "minimum": "90%",
-                            "measurement": "word recognition rate"
-                        },
-                        "pace": {
-                            "optimal": "150-180 words per minute",
-                            "range": {
-                                "slow": "120-150 wpm",
-                                "normal": "150-180 wpm",
-                                "fast": "180-200 wpm"
+            # Define the function schema for OpenAI
+            function_schema = {
+                "name": "generate_voice_agent_config",
+                "description": "Generate a complete YAML configuration for an AI voice sales agent",
+                "parameters": {
+                    "type": "object",
+                    "required": ["metadata", "voice_settings", "conversation_framework", "communication_patterns", "behavioral_guidelines", "quality_thresholds"],
+                    "properties": {
+                        "metadata": {
+                            "type": "object",
+                            "required": ["version", "type", "description", "last_updated"],
+                            "properties": {
+                                "version": { "type": "string" },
+                                "type": { "type": "string" },
+                                "description": { "type": "string" },
+                                "last_updated": { "type": "string" }
                             }
                         },
-                        "tone_consistency": {
-                            "target": "90%",
-                            "minimum": "85%",
-                            "measurement": "emotional congruence"
-                        }
-                    },
-                    "interaction_quality": {
-                        "turn_taking": {
-                            "min_pause": "0.5 seconds",
-                            "max_pause": "2 seconds",
-                            "interruption_handling": "graceful pause and acknowledgment"
+                        "voice_settings": {
+                            "type": "object",
+                            "required": ["tone", "pacing", "expression", "adaptation"],
+                            "properties": {
+                                "tone": {
+                                    "type": "object",
+                                    "properties": {
+                                        "base_tone": { "type": "string" },
+                                        "variations": { "type": "array", "items": { "type": "string" }},
+                                        "adaptations": {
+                                            "type": "object",
+                                            "properties": {
+                                                "objection_handling": { "type": "string" },
+                                                "value_presentation": { "type": "string" },
+                                                "closing": { "type": "string" }
+                                            }
+                                        }
+                                    }
+                                },
+                                "pacing": {
+                                    "type": "object",
+                                    "properties": {
+                                        "base_speed": { "type": "string" },
+                                        "dynamic_range": { "type": "array", "items": { "type": "string" }},
+                                        "situational_adjustments": { "type": "object" }
+                                    }
+                                },
+                                "expression": {
+                                    "type": "object",
+                                    "properties": {
+                                        "emphasis_patterns": { "type": "array", "items": { "type": "string" }},
+                                        "emotional_markers": { "type": "array", "items": { "type": "string" }},
+                                        "pause_points": { "type": "array", "items": { "type": "string" }}
+                                    }
+                                },
+                                "adaptation": {
+                                    "type": "object",
+                                    "properties": {
+                                        "customer_matching": { "type": "boolean" },
+                                        "context_sensitivity": { "type": "boolean" },
+                                        "emotional_mirroring": { "type": "boolean" },
+                                        "response_calibration": { "type": "object" }
+                                    }
+                                }
+                            }
                         },
-                        "engagement": {
-                            "min_turn_length": "10 words",
-                            "max_turn_length": "100 words",
-                            "follow_up_questions": "minimum 1 per topic"
+                        "conversation_framework": {
+                            "type": "object",
+                            "required": ["opening", "discovery", "presentation", "objection_handling", "closing"],
+                            "properties": {
+                                "opening": {
+                                    "type": "object",
+                                    "properties": {
+                                        "approach": { "type": "string" },
+                                        "key_elements": { "type": "array", "items": { "type": "string" }},
+                                        "timing": { "type": "string" }
+                                    }
+                                },
+                                "discovery": {
+                                    "type": "object",
+                                    "properties": {
+                                        "question_types": { "type": "array", "items": { "type": "string" }},
+                                        "focus_areas": { "type": "array", "items": { "type": "string" }},
+                                        "techniques": { "type": "array", "items": { "type": "object" }}
+                                    }
+                                },
+                                "presentation": {
+                                    "type": "object",
+                                    "properties": {
+                                        "structure": { "type": "array", "items": { "type": "string" }},
+                                        "emphasis": { "type": "string" },
+                                        "techniques": { "type": "array", "items": { "type": "object" }}
+                                    }
+                                },
+                                "objection_handling": {
+                                    "type": "object",
+                                    "properties": {
+                                        "approach": { "type": "string" },
+                                        "key_principles": { "type": "array", "items": { "type": "string" }},
+                                        "responses": { "type": "object" }
+                                    }
+                                },
+                                "closing": {
+                                    "type": "object",
+                                    "properties": {
+                                        "style": { "type": "string" },
+                                        "techniques": { "type": "array", "items": { "type": "object" }},
+                                        "timing_triggers": { "type": "array", "items": { "type": "string" }}
+                                    }
+                                }
+                            }
                         },
-                        "effectiveness": {
-                            "objection_resolution": "minimum 80% success rate",
-                            "call_progression": "maximum 3 topic shifts per minute",
-                            "value_statement_density": "1-2 per minute"
+                        "communication_patterns": {
+                            "type": "object",
+                            "required": ["power_phrases", "transition_phrases", "emphasis_patterns", "response_templates"],
+                            "properties": {
+                                "power_phrases": { "type": "array", "items": { "type": "string" }},
+                                "transition_phrases": { "type": "array", "items": { "type": "string" }},
+                                "emphasis_patterns": { "type": "array", "items": { "type": "object" }},
+                                "response_templates": { "type": "object" }
+                            }
+                        },
+                        "behavioral_guidelines": {
+                            "type": "object",
+                            "required": ["core_principles", "do", "dont", "adaptations"],
+                            "properties": {
+                                "core_principles": { "type": "array", "items": { "type": "string" }},
+                                "do": { "type": "array", "items": { "type": "string" }},
+                                "dont": { "type": "array", "items": { "type": "string" }},
+                                "adaptations": {
+                                    "type": "object",
+                                    "properties": {
+                                        "to_customer_style": { "type": "boolean" },
+                                        "to_conversation_stage": { "type": "boolean" },
+                                        "to_emotional_state": { "type": "boolean" }
+                                    }
+                                }
+                            }
+                        },
+                        "quality_thresholds": {
+                            "type": "object",
+                            "required": ["response_time", "speech_metrics", "interaction_quality"],
+                            "properties": {
+                                "response_time": {
+                                    "type": "object",
+                                    "properties": {
+                                        "standard": { "type": "string" },
+                                        "max_pause": { "type": "string" },
+                                        "min_pause": { "type": "string" }
+                                    }
+                                },
+                                "speech_metrics": {
+                                    "type": "object",
+                                    "properties": {
+                                        "clarity": { "type": "object" },
+                                        "pace": { "type": "object" },
+                                        "tone_consistency": { "type": "object" }
+                                    }
+                                },
+                                "interaction_quality": {
+                                    "type": "object",
+                                    "properties": {
+                                        "turn_taking": { "type": "object" },
+                                        "engagement": { "type": "object" },
+                                        "effectiveness": { "type": "object" }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
             }
-            
-            # Extract and add techniques from structured data
-            for technique in sales_techniques:
-                name = technique.get("name", "").lower()
-                if "question" in name or "discovery" in name:
-                    config["conversation_framework"]["discovery"]["techniques"].append({
-                        "name": technique.get("name"),
-                        "description": technique.get("description"),
-                        "examples": technique.get("examples", [])
-                    })
-                elif "present" in name or "value" in name:
-                    config["conversation_framework"]["presentation"]["techniques"].append({
-                        "name": technique.get("name"),
-                        "description": technique.get("description"),
-                        "examples": technique.get("examples", [])
-                    })
-                elif "clos" in name:
-                    config["conversation_framework"]["closing"]["techniques"].append({
-                        "name": technique.get("name"),
-                        "description": technique.get("description"),
-                        "examples": technique.get("examples", [])
-                    })
-            
-            # Add communication patterns
-            for strategy in communication_strategies:
-                if strategy.get("examples"):
-                    config["communication_patterns"]["power_phrases"].extend(strategy.get("examples"))
-                if strategy.get("type"):
-                    config["communication_patterns"]["emphasis_patterns"].append({
-                        "type": strategy.get("type"),
-                        "description": strategy.get("description", ""),
-                        "examples": strategy.get("examples", [])
-                    })
-                    
-            # Add behavioral guidelines
-            for guideline in voice_guidelines:
-                if guideline.get("type") == "do":
-                    config["behavioral_guidelines"]["do"].append(guideline.get("description"))
-                elif guideline.get("type") == "dont":
-                    config["behavioral_guidelines"]["dont"].append(guideline.get("description"))
-            
-            # Add core principles from analysis
-            if "SUMMARY" in analysis:
-                summary_section = analysis.split("SUMMARY")[1].split("\n\n")[0]
-                principles = [line.strip("- ").strip() for line in summary_section.split("\n") if line.strip().startswith("-")]
-                config["behavioral_guidelines"]["core_principles"] = principles
-            
-            # Convert to YAML with proper formatting
+
+            # Create prompt for OpenAI
+            messages = [
+                {"role": "system", "content": "You are an expert in creating YAML configurations for AI voice agents. Generate a complete configuration based on the provided analysis and structured data."},
+                {"role": "user", "content": f"""Generate a complete YAML configuration for an AI voice sales agent based on this analysis and structured data.
+
+Analysis:
+{analysis}
+
+Structured Data:
+{json.dumps(structured_data, indent=2)}"""}
+            ]
+
+            # Call OpenAI with function calling
+            response = self.config_llm.chat_completions(
+                messages=messages,
+                tools=[function_schema],
+                temperature=0.7
+            )
+
+            if response.status == LLMResponseStatus.ERROR:
+                raise Exception(f"Configuration generation failed: {response.message}")
+
+            # Extract the YAML data from the function call
+            if response.tool_calls and response.tool_calls[0]["tool"]["name"] == "generate_voice_agent_config":
+                yaml_data = json.loads(response.tool_calls[0]["tool"]["arguments"])
+            else:
+                raise Exception("No valid configuration generated")
+
+            # Convert to YAML string with proper formatting
             yaml_str = """# AI Voice Sales Agent Configuration
 # Generated: {timestamp}
 # Purpose: Define voice characteristics, conversation patterns, and behavioral guidelines
@@ -517,14 +533,14 @@ Remember to:
 
 {yaml_content}""".format(
                 timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                yaml_content=yaml.dump(config, default_flow_style=False, sort_keys=False, allow_unicode=True)
+                yaml_content=yaml.dump(yaml_data, default_flow_style=False, sort_keys=False, allow_unicode=True)
             )
-            
+
             # Validate the configuration before returning
             self._validate_yaml(yaml_str)
-            
+
             return yaml_str
-            
+
         except Exception as e:
             logger.error(f"Error generating YAML config: {str(e)}", exc_info=True)
             raise Exception(f"YAML configuration generation failed: {str(e)}")
@@ -555,21 +571,11 @@ Remember to:
             self.output_message.actions.append("Beginning configuration generation...")
             self.output_message.push_update()
 
-            # Generate configuration
-            messages = self._get_config_prompt(analysis, structured_data, config_type)
+            # Generate YAML configuration using OpenAI's function calling
+            yaml_str = self._generate_yaml_config(analysis, structured_data)
             
-            logger.info("Requesting configuration generation from Anthropic")
-            response = self.config_llm.chat_completions(
-                messages=messages,
-                temperature=0.7,
-                max_tokens=16384
-            )
-            
-            if response.status == LLMResponseStatus.ERROR:
-                raise Exception(f"Configuration generation failed: {response.message}")
-
             # Validate and clean YAML
-            yaml_data = self._validate_yaml(response.content)
+            yaml_data = self._validate_yaml(yaml_str)
 
             # Add metadata
             config_metadata = {
@@ -581,7 +587,7 @@ Remember to:
                     "structured_data": True
                 },
                 "model": {
-                    "name": "anthropic-claude",
+                    "name": "openai-gpt4",
                     "temperature": 0.7
                 }
             }
@@ -597,11 +603,41 @@ Remember to:
             # Store results
             text_content.yaml_data = yaml_data
             text_content.config_metadata = config_metadata
-            text_content.text = yaml.dump(yaml_data, default_flow_style=False)
+            text_content.text = f"""# YAML Configuration:
+```yaml
+{yaml_str}
+```
+
+# Voice Prompt:
+
+You are an advanced AI voice sales agent, trained in high-performance sales techniques and emotional intelligence. Your goal is to engage in natural, persuasive sales conversations while maintaining unwavering professionalism.
+
+## Context & Objectives:
+This is a sales training focused on building confidence, handling objections, and mastering closing techniques. The emphasis is on transforming sales professionals into confident closers through proven psychological techniques.
+
+### Key Techniques:
+- Identity Shifting: Creating a confident sales persona
+- Value Anchoring: Connecting price to long-term value
+- Emotional Connection: Speaking to desires rather than logic
+- Hypothetical Questioning: Bypassing initial resistance
+
+### Identity & Persona:
+- Embody a confident, professional sales identity
+- Project unwavering confidence while maintaining authenticity
+- Adapt tone and pace to match customer while staying authoritative
+- Demonstrate deep product knowledge and genuine desire to help
+- Maintain strong eye contact and assured presence
+
+### Conversation Framework:
+1. Opening (first 30 seconds):
+   - Create a strong first impression with confident presence
+   - Establish immediate familiarity
+   - Create urgency while using permission-based language
+   - Frame questions for positive responses
+   - Tell stories to illustrate points"""
             text_content.status = MsgStatus.success
             text_content.status_message = "Configuration generated successfully"
             
-            self.output_message.actions.append("Configuration generation completed")
             self.output_message.push_update()
             
             logger.info("YAML configuration generated successfully")
