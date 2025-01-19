@@ -10,6 +10,8 @@ from director.agents.base import BaseAgent, AgentResponse, AgentStatus
 from director.core.session import TextContent, MsgStatus, OutputMessage, Session
 from director.tools.anthropic_tool import AnthropicTool
 from director.llm.base import LLMResponseStatus
+from director.utils.supabase import SupabaseVectorStore
+from director.llm.openai import OpenAI
 
 logger = logging.getLogger(__name__)
 
@@ -36,12 +38,13 @@ class YAMLConfigurationAgent(BaseAgent):
     
     def __init__(self, session: Session, **kwargs):
         self.agent_name = "yaml_configuration"
-        self.description = "Generates YAML configurations for system settings"
+        self.description = "Generates YAML configurations from analysis"
         self.parameters = self.get_parameters()
         super().__init__(session=session, **kwargs)
         
-        # Initialize Anthropic
-        self.config_llm = kwargs.get('config_llm') or AnthropicTool()
+        # Initialize OpenAI and Vector Store
+        self.config_llm = kwargs.get('config_llm') or OpenAI()
+        self.vector_store = SupabaseVectorStore()
 
     def get_parameters(self) -> dict:
         return {
@@ -545,6 +548,39 @@ Structured Data:
             logger.error(f"Error generating YAML config: {str(e)}", exc_info=True)
             raise Exception(f"YAML configuration generation failed: {str(e)}")
 
+    def _process_long_analysis(self, analysis: str) -> str:
+        """Process long analysis text using vector search"""
+        # Store the analysis in chunks
+        transcript_id = self.vector_store.store_transcript(
+            analysis,
+            metadata={"type": "sales_analysis"}
+        )
+        
+        # Search for relevant chunks based on key aspects
+        key_aspects = [
+            "sales techniques",
+            "communication patterns",
+            "objection handling",
+            "voice characteristics",
+            "behavioral guidelines"
+        ]
+        
+        relevant_chunks = []
+        for aspect in key_aspects:
+            chunks = self.vector_store.search_similar_chunks(
+                f"Find information about {aspect}",
+                limit=2
+            )
+            relevant_chunks.extend(chunks)
+        
+        # Combine relevant chunks
+        processed_analysis = "\n\n".join([
+            f"# {chunk['similarity']:.2f} relevance:\n{chunk['chunk_text']}"
+            for chunk in relevant_chunks
+        ])
+        
+        return processed_analysis
+
     def run(
         self,
         analysis: str,
@@ -571,8 +607,11 @@ Structured Data:
             self.output_message.actions.append("Beginning configuration generation...")
             self.output_message.push_update()
 
+            # Process long analysis using vector search
+            processed_analysis = self._process_long_analysis(analysis)
+            
             # Generate YAML configuration using OpenAI's function calling
-            yaml_str = self._generate_yaml_config(analysis, structured_data)
+            yaml_str = self._generate_yaml_config(processed_analysis, structured_data)
             
             # Validate and clean YAML
             yaml_data = self._validate_yaml(yaml_str)

@@ -15,6 +15,7 @@ class Analysis(Base):
     id = Column(Integer, primary_key=True)
     video_id = Column(String(255), nullable=False)
     collection_id = Column(String(255), nullable=False)
+    transcript = Column(Text)
     raw_analysis = Column(Text)
     status = Column(String(50), default='pending')
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -72,9 +73,9 @@ def init_db(db_url=None):
         db_url = os.getenv('DATABASE_URL', 'sqlite:///director.db')
     
     engine = create_engine(db_url)
-    Base.metadata.create_all(engine)
-    Session.configure(bind=engine)  # Configure the Session class
-    return Session  # Return the configured Session class
+    Base.metadata.create_all(engine)  # This will create any missing tables/columns
+    Session.configure(bind=engine)
+    return Session
 
 # Create Session class - but don't bind it yet
 Session = sessionmaker()

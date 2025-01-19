@@ -1,5 +1,6 @@
 import os
 import logging
+from datetime import datetime
 
 from director.agents.thumbnail import ThumbnailAgent
 from director.agents.summarize_video import SummarizeVideoAgent
@@ -27,6 +28,7 @@ from director.agents.comparison import ComparisonAgent
 from director.agents.web_search_agent import WebSearchAgent
 from director.agents.sales_prompt_extractor import SalesPromptExtractorAgent
 from director.agents.bland_ai_agent import BlandAI_Agent
+from director.agents.base import AgentStatus
 
 
 from director.core.session import Session, InputMessage, MsgStatus, TextContent
@@ -120,10 +122,31 @@ class ChatHandler:
                         collection_id=session.collection_id,
                         bypass_reasoning=True
                     )
-                    # The response is already an OutputMessage, so we just use it directly
-                    session.output_message = response
-                    session.output_message.status = MsgStatus.success
-                    session.output_message.publish()
+                    # Convert AgentResponse to OutputMessage format
+                    output_message = {
+                        "status": "success" if response.status == AgentStatus.SUCCESS else "error",
+                        "message": response.message,
+                        "session_id": session.session_id,
+                        "conv_id": session.conv_id,
+                        "msg_type": "output",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": response.data.get("analysis", response.message),
+                                "status": "success" if response.status == AgentStatus.SUCCESS else "error",
+                                "status_message": response.message,
+                                "agent_name": "sales_prompt_extractor",
+                                "structured_data": response.data.get("structured_data", {}),
+                                "voice_prompt": response.data.get("voice_prompt", "")
+                            }
+                        ],
+                        "actions": [],
+                        "agents": ["sales_prompt_extractor"],
+                        "metadata": {
+                            "timestamp": datetime.now().isoformat()
+                        }
+                    }
+                    return output_message
                 elif agent_name == "bland_ai":
                     # Direct agent call for bland_ai
                     agent = agents_mapping["bland_ai"]
@@ -192,11 +215,26 @@ class ChatHandler:
             return session.output_message.model_dump()
 
         except Exception as e:
-            session.output_message.update_status(MsgStatus.error)
             logger.exception(f"Error in chat handler: {e}")
             
+            # Create error response
+            error_response = {
+                "status": "error",
+                "message": f"Error in chat handler: {str(e)}",
+                "session_id": session.id,
+                "conv_id": session.conv_id,
+                "msg_type": "output",
+                "content": [],
+                "actions": [],
+                "agents": [],
+                "metadata": {
+                    "timestamp": datetime.now().isoformat(),
+                    "error_type": type(e).__name__
+                }
+            }
+            
             # Return error response
-            return session.output_message.model_dump()
+            return error_response
 
 
 class SessionHandler:
