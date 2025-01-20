@@ -392,8 +392,14 @@ For each section, include:
 
     def _process_long_transcript(self, transcript: str, video_id: str, collection_id: str) -> str:
         """Process long transcripts using vector search for relevant chunks"""
-        # Store transcript chunks with embeddings
-        self.vector_store.store_transcript(transcript, video_id, collection_id)
+        try:
+            # Store transcript chunks with embeddings
+            self.vector_store.store_transcript(transcript, video_id, collection_id)
+        except Exception as e:
+            # If error is not due to duplicate transcript, raise it
+            if "'code': '23505'" not in str(e) and "duplicate key value" not in str(e):
+                raise
+            logger.info(f"Transcript already exists in Supabase for video {video_id}")
         
         # Define key aspects to search for
         key_aspects = [
@@ -422,7 +428,15 @@ For each section, include:
         try:
             # Process transcript using vector search if it's long
             if len(transcript.split()) > 2000:  # If transcript is longer than ~2000 words
-                processed_transcript = self._process_long_transcript(transcript, video_id, collection_id)
+                try:
+                    processed_transcript = self._process_long_transcript(transcript, video_id, collection_id)
+                except Exception as e:
+                    # If error is due to duplicate transcript, just use the original transcript
+                    if "'code': '23505'" in str(e) or "duplicate key value" in str(e):
+                        logger.info(f"Transcript already exists in Supabase for video {video_id}, proceeding with analysis")
+                        processed_transcript = transcript
+                    else:
+                        raise
             else:
                 processed_transcript = transcript
                 
@@ -508,13 +522,42 @@ For each section, include:
                     # Generate structured data
                     structured_data = self._generate_structured_output(analysis_text, voice_prompt)
                     
-                    # Update analysis with results
+                    # Store in Supabase
+                    try:
+                        self.vector_store.store_generated_output(
+                            video_id=video_id,
+                            collection_id=collection_id,
+                            output_type="structured_data",
+                            content=json.dumps(structured_data)
+                        )
+                        self.vector_store.store_generated_output(
+                            video_id=video_id,
+                            collection_id=collection_id,
+                            output_type="voice_prompt",
+                            content=voice_prompt
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to store outputs in Supabase: {str(e)}")
+                    
+                    # Update analysis record
                     analysis.raw_analysis = analysis_text
                     analysis.status = 'completed'
                     analysis.meta_data = {
                         "structured_data": structured_data,
                         "voice_prompt": voice_prompt
                     }
+                    
+                    # Also store in structured_data and voice_prompt tables
+                    if not analysis.structured_data:
+                        analysis.structured_data = StructuredData(data=structured_data)
+                    else:
+                        analysis.structured_data.data = structured_data
+                        
+                    if not analysis.voice_prompt:
+                        analysis.voice_prompt = VoicePrompt(prompt=voice_prompt)
+                    else:
+                        analysis.voice_prompt.prompt = voice_prompt
+                        
                     db_session.commit()
                     
                     return AgentResponse(
@@ -1108,13 +1151,8 @@ Remember to stay natural and conversational while implementing these guidelines.
                 try:
                     analysis_data = json.loads(analysis_text)
                 except json.JSONDecodeError:
-                    # If not valid JSON, treat as raw text and create a basic structure
-                    analysis_data = {
-                        "sales_techniques": [],
-                        "communication_strategies": [],
-                        "objection_handling": [],
-                        "voice_agent_guidelines": []
-                    }
+                    # If not valid JSON, extract key information from the text
+                    analysis_data = self._extract_analysis_data(analysis_text)
             else:
                 analysis_data = analysis_text
 
@@ -1124,14 +1162,79 @@ Remember to stay natural and conversational while implementing these guidelines.
             objection_handling = analysis_data.get("objection_handling", [])
             voice_guidelines = analysis_data.get("voice_agent_guidelines", [])
             
-            # Format the prompt
-            prompt = self._get_system_prompt(analysis_data)
+            # Format the prompt sections
+            prompt_sections = []
             
-            return prompt
+            # Add voice guidelines
+            if voice_guidelines:
+                prompt_sections.append("Voice Agent Guidelines:")
+                for guideline in voice_guidelines:
+                    prompt_sections.append(f"- {guideline}")
+            
+            # Add key communication strategies
+            if communication_strategies:
+                prompt_sections.append("\nKey Communication Approaches:")
+                for strategy in communication_strategies[:3]:  # Limit to top 3
+                    prompt_sections.append(f"- {strategy.get('name', '')}: {strategy.get('description', '')}")
+            
+            # Add objection handling
+            if objection_handling:
+                prompt_sections.append("\nObjection Handling:")
+                for objection in objection_handling[:3]:  # Limit to top 3
+                    prompt_sections.append(f"- When hearing: {objection.get('objection', '')}")
+                    prompt_sections.append(f"  Respond with: {objection.get('response', '')}")
+            
+            # Add sales techniques
+            if sales_techniques:
+                prompt_sections.append("\nKey Sales Techniques:")
+                for technique in sales_techniques[:3]:  # Limit to top 3
+                    prompt_sections.append(f"- {technique.get('name', '')}: {technique.get('description', '')}")
+            
+            # Combine all sections
+            prompt = "\n".join(prompt_sections)
+            
+            return prompt or "Use standard sales conversation practices and maintain a professional, friendly tone."
             
         except Exception as e:
             logger.error(f"Error generating voice prompt: {str(e)}", exc_info=True)
             return "Error generating voice prompt. Please use standard sales conversation practices."
+
+    def _extract_analysis_data(self, text: str) -> Dict:
+        """Extract structured data from raw analysis text"""
+        data = {
+            "sales_techniques": [],
+            "communication_strategies": [],
+            "objection_handling": [],
+            "voice_agent_guidelines": []
+        }
+        
+        # Extract sections using regex patterns
+        sections = {
+            "sales_techniques": r"(?i)sales\s+techniques?.*?(?=\n\n|$)",
+            "communication_strategies": r"(?i)communication\s+strategies?.*?(?=\n\n|$)",
+            "objection_handling": r"(?i)objection\s+handling.*?(?=\n\n|$)",
+            "voice_agent_guidelines": r"(?i)voice.*?guidelines?.*?(?=\n\n|$)"
+        }
+        
+        for key, pattern in sections.items():
+            matches = re.findall(pattern, text, re.DOTALL)
+            if matches:
+                # Split into bullet points and clean up
+                points = re.split(r'\n\s*[-•*]\s*', matches[0])
+                points = [p.strip() for p in points if p.strip()]
+                
+                if key in ["sales_techniques", "communication_strategies"]:
+                    data[key] = [{"name": p.split(':')[0].strip() if ':' in p else p,
+                                "description": p.split(':')[1].strip() if ':' in p else ""} 
+                               for p in points[1:]]  # Skip header
+                elif key == "objection_handling":
+                    data[key] = [{"objection": p.split('Response:')[0].replace('Objection:', '').strip(),
+                                "response": p.split('Response:')[1].strip() if 'Response:' in p else ""}
+                               for p in points[1:]]  # Skip header
+                else:
+                    data[key] = points[1:]  # Skip header
+        
+        return data
 
     def _format_behavioral_patterns(self, patterns: Dict) -> str:
         """Format behavioral patterns into prompt section"""
@@ -1333,6 +1436,34 @@ Remember to stay natural and conversational while implementing these guidelines.
         """Process an existing analysis"""
         try:
             if analysis.status == 'completed':
+                # Try to get outputs from Supabase first
+                structured_data = {}
+                voice_prompt = ""
+                try:
+                    structured_data_output = self.vector_store.get_generated_output(
+                        video_id=analysis.video_id,
+                        collection_id=analysis.collection_id,
+                        output_type="structured_data"
+                    )
+                    voice_prompt_output = self.vector_store.get_generated_output(
+                        video_id=analysis.video_id,
+                        collection_id=analysis.collection_id,
+                        output_type="voice_prompt"
+                    )
+                    
+                    if structured_data_output:
+                        structured_data = json.loads(structured_data_output)
+                    if voice_prompt_output:
+                        voice_prompt = voice_prompt_output
+                except Exception as e:
+                    logger.warning(f"Failed to get outputs from Supabase: {str(e)}")
+                
+                # Fallback to SQLite data if Supabase retrieval failed
+                if not structured_data and analysis.structured_data:
+                    structured_data = analysis.structured_data.data
+                if not voice_prompt and analysis.voice_prompt:
+                    voice_prompt = analysis.voice_prompt.prompt
+
                 # Format complete response with all components
                 complete_response = f"""Here's my detailed analysis:
 
@@ -1340,15 +1471,15 @@ Remember to stay natural and conversational while implementing these guidelines.
 
 STRUCTURED DATA:
 ```json
-{json.dumps(analysis.structured_data.data if analysis.structured_data else {}, indent=2)}
+{json.dumps(structured_data, indent=2)}
 ```
 
 VOICE PROMPT:
 ```
-{analysis.voice_prompt.prompt if analysis.voice_prompt else ''}
+{voice_prompt}
 ```"""
 
-                # Update text content without using update_status
+                # Update text content
                 text_content.text = complete_response
                 text_content.status = MsgStatus.success
                 text_content.status_message = "Retrieved existing analysis"
@@ -1358,8 +1489,8 @@ VOICE PROMPT:
                     message="Retrieved existing analysis",
                     data={
                         "analysis": analysis.raw_analysis,
-                        "structured_data": analysis.structured_data.data if analysis.structured_data else {},
-                        "voice_prompt": analysis.voice_prompt.prompt if analysis.voice_prompt else ''
+                        "structured_data": structured_data,
+                        "voice_prompt": voice_prompt
                     }
                 )
             
@@ -1382,7 +1513,7 @@ VOICE PROMPT:
         """Process a new analysis"""
         try:
             # Analyze content
-            analysis_text = self._analyze_content(transcript)
+            analysis_text = self._analyze_content(transcript, analysis.video_id, analysis.collection_id)
             if not analysis_text:
                 text_content.text = "Failed to analyze content"
                 text_content.status = MsgStatus.error
@@ -1399,6 +1530,24 @@ VOICE PROMPT:
             # Generate structured data
             structured_data = self._generate_structured_output(analysis_text, voice_prompt)
             
+            # Store in Supabase
+            try:
+                self.vector_store.store_generated_output(
+                    video_id=analysis.video_id,
+                    collection_id=analysis.collection_id,
+                    output_type="structured_data",
+                    content=json.dumps(structured_data)
+                )
+                self.vector_store.store_generated_output(
+                    video_id=analysis.video_id,
+                    collection_id=analysis.collection_id,
+                    output_type="voice_prompt",
+                    content=voice_prompt
+                )
+                logger.info(f"Stored outputs in Supabase for video {analysis.video_id}")
+            except Exception as e:
+                logger.warning(f"Failed to store outputs in Supabase: {str(e)}")
+            
             # Update analysis record
             analysis.raw_analysis = analysis_text
             analysis.status = 'completed'
@@ -1406,6 +1555,17 @@ VOICE PROMPT:
                 "structured_data": structured_data,
                 "voice_prompt": voice_prompt
             }
+            
+            # Also store in structured_data and voice_prompt tables
+            if not analysis.structured_data:
+                analysis.structured_data = StructuredData(data=structured_data)
+            else:
+                analysis.structured_data.data = structured_data
+                
+            if not analysis.voice_prompt:
+                analysis.voice_prompt = VoicePrompt(prompt=voice_prompt)
+            else:
+                analysis.voice_prompt.prompt = voice_prompt
             
             # Format complete response
             complete_response = f"""Analysis completed successfully:

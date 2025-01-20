@@ -138,4 +138,49 @@ except Exception as e:
 ### Monitoring
 - Add detailed logging
 - Implement performance metrics
-- Track error rates and types 
+- Track error rates and types
+
+## Edge Functions Integration
+
+### Synchronous Processing Flow
+The Edge Functions integration follows a synchronous request-response pattern:
+
+1. **Initial Request**
+   - Frontend initiates video analysis request
+   - Backend processes transcript and embeddings
+   - Direct synchronous calls to Edge Functions
+
+2. **Edge Function Processing**
+   ```typescript
+   interface EdgeFunctionResponse {
+     status: 'success' | 'error';
+     data: {
+       result: any;
+       processing_time: number;
+     };
+     error?: {
+       message: string;
+       code: string;
+     };
+   }
+   ```
+
+3. **Data Flow Stages**
+   - Transcript Processing → Embeddings → Structured Data → Voice Prompt
+   - Each stage waits for completion before proceeding
+   - Results stored in Supabase tables for persistence
+
+4. **Response Handling**
+   - Backend aggregates results from all stages
+   - Returns complete analysis to frontend
+   - Frontend updates UI with all data simultaneously
+
+5. **Error Management**
+   - Immediate error reporting from Edge Functions
+   - Backend handles errors and returns appropriate response
+   - No automatic retries (managed by backend if needed)
+
+### Integration with Existing Flow
+- Edge Functions extend the existing chat handler functionality
+- Maintains compatibility with current WebSocket architecture
+- Preserves session management and error recovery mechanisms 

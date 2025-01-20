@@ -62,6 +62,54 @@ CREATE TABLE IF NOT EXISTS analysis_results (
 )
 """
 
+# SQL to create the videos table
+CREATE_VIDEOS_TABLE = """
+CREATE TABLE IF NOT EXISTS videos (
+    id TEXT PRIMARY KEY,
+    video_id TEXT NOT NULL,
+    collection_id TEXT NOT NULL,
+    metadata JSON,
+    created_at INTEGER,
+    UNIQUE(video_id, collection_id)
+)
+"""
+
+# SQL to create the transcripts table
+CREATE_TRANSCRIPTS_TABLE = """
+CREATE TABLE IF NOT EXISTS transcripts (
+    id TEXT PRIMARY KEY,
+    video_id TEXT REFERENCES videos(id),
+    full_text TEXT NOT NULL,
+    metadata JSON,
+    created_at INTEGER
+)
+"""
+
+# SQL to create the transcript_chunks table
+CREATE_TRANSCRIPT_CHUNKS_TABLE = """
+CREATE TABLE IF NOT EXISTS transcript_chunks (
+    id TEXT PRIMARY KEY,
+    transcript_id TEXT REFERENCES transcripts(id),
+    chunk_text TEXT NOT NULL,
+    chunk_index INTEGER NOT NULL,
+    embedding JSON,
+    metadata JSON,
+    created_at INTEGER
+)
+"""
+
+# SQL to create the generated_outputs table
+CREATE_GENERATED_OUTPUTS_TABLE = """
+CREATE TABLE IF NOT EXISTS generated_outputs (
+    id TEXT PRIMARY KEY,
+    video_id TEXT REFERENCES videos(id),
+    output_type TEXT NOT NULL,
+    content TEXT NOT NULL,
+    metadata JSON,
+    created_at INTEGER
+)
+"""
+
 def initialize_sqlite(db_name="director.db"):
     """Initialize the SQLite database by creating the necessary tables."""
     conn = sqlite3.connect(db_name)
@@ -71,6 +119,10 @@ def initialize_sqlite(db_name="director.db"):
     cursor.execute(CREATE_CONVERSATIONS_TABLE)
     cursor.execute(CREATE_CONTEXT_MESSAGES_TABLE)
     cursor.execute(CREATE_ANALYSIS_RESULTS_TABLE)
+    cursor.execute(CREATE_VIDEOS_TABLE)
+    cursor.execute(CREATE_TRANSCRIPTS_TABLE)
+    cursor.execute(CREATE_TRANSCRIPT_CHUNKS_TABLE)
+    cursor.execute(CREATE_GENERATED_OUTPUTS_TABLE)
 
     conn.commit()
     conn.close()

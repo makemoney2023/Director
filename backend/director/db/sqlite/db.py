@@ -438,5 +438,183 @@ class SQLiteDB(BaseDB):
         self.conn.commit()
         return self.cursor.rowcount > 0
 
+    def add_video(self, id: str, video_id: str, collection_id: str, metadata: dict = {}, created_at: int = None) -> None:
+        """Add a new video record.
+        
+        Args:
+            id: Unique ID for the video
+            video_id: External video ID
+            collection_id: Collection ID
+            metadata: Additional metadata
+            created_at: Creation timestamp
+        """
+        created_at = created_at or int(time.time())
+        
+        self.cursor.execute(
+            """
+            INSERT OR REPLACE INTO videos (id, video_id, collection_id, metadata, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (id, video_id, collection_id, json.dumps(metadata), created_at)
+        )
+        self.conn.commit()
+
+    def add_transcript(self, id: str, video_id: str, full_text: str, metadata: dict = {}, created_at: int = None) -> None:
+        """Add a transcript for a video.
+        
+        Args:
+            id: Unique ID for the transcript
+            video_id: ID of the associated video
+            full_text: Complete transcript text
+            metadata: Additional metadata
+            created_at: Creation timestamp
+        """
+        created_at = created_at or int(time.time())
+        
+        self.cursor.execute(
+            """
+            INSERT OR REPLACE INTO transcripts (id, video_id, full_text, metadata, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (id, video_id, full_text, json.dumps(metadata), created_at)
+        )
+        self.conn.commit()
+
+    def add_transcript_chunk(self, id: str, transcript_id: str, chunk_text: str, chunk_index: int, 
+                           embedding: list = None, metadata: dict = {}, created_at: int = None) -> None:
+        """Add a transcript chunk with embedding.
+        
+        Args:
+            id: Unique ID for the chunk
+            transcript_id: ID of the associated transcript
+            chunk_text: Text content of the chunk
+            chunk_index: Index of the chunk in sequence
+            embedding: Vector embedding of the chunk
+            metadata: Additional metadata
+            created_at: Creation timestamp
+        """
+        created_at = created_at or int(time.time())
+        
+        self.cursor.execute(
+            """
+            INSERT OR REPLACE INTO transcript_chunks 
+            (id, transcript_id, chunk_text, chunk_index, embedding, metadata, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (id, transcript_id, chunk_text, chunk_index, 
+             json.dumps(embedding) if embedding else None,
+             json.dumps(metadata), created_at)
+        )
+        self.conn.commit()
+
+    def add_generated_output(self, id: str, video_id: str, output_type: str, content: str,
+                           metadata: dict = {}, created_at: int = None) -> None:
+        """Add a generated output.
+        
+        Args:
+            id: Unique ID for the output
+            video_id: ID of the associated video
+            output_type: Type of output (e.g., 'structured_data', 'voice_prompt')
+            content: Output content
+            metadata: Additional metadata
+            created_at: Creation timestamp
+        """
+        created_at = created_at or int(time.time())
+        
+        self.cursor.execute(
+            """
+            INSERT OR REPLACE INTO generated_outputs 
+            (id, video_id, output_type, content, metadata, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (id, video_id, output_type, content, json.dumps(metadata), created_at)
+        )
+        self.conn.commit()
+
+    def get_video(self, id: str) -> Optional[dict]:
+        """Get a video by ID."""
+        self.cursor.execute("SELECT * FROM videos WHERE id = ?", (id,))
+        row = self.cursor.fetchone()
+        if row:
+            result = dict(row)
+            result["metadata"] = json.loads(result["metadata"])
+            return result
+        return None
+
+    def get_transcript(self, video_id: str) -> Optional[dict]:
+        """Get a transcript by video ID."""
+        self.cursor.execute("SELECT * FROM transcripts WHERE video_id = ?", (video_id,))
+        row = self.cursor.fetchone()
+        if row:
+            result = dict(row)
+            result["metadata"] = json.loads(result["metadata"])
+            return result
+        return None
+
+    def get_transcript_chunks(self, transcript_id: str) -> List[dict]:
+        """Get all chunks for a transcript."""
+        self.cursor.execute(
+            "SELECT * FROM transcript_chunks WHERE transcript_id = ? ORDER BY chunk_index",
+            (transcript_id,)
+        )
+        rows = self.cursor.fetchall()
+        results = []
+        for row in rows:
+            result = dict(row)
+            result["metadata"] = json.loads(result["metadata"])
+            if result["embedding"]:
+                result["embedding"] = json.loads(result["embedding"])
+            results.append(result)
+        return results
+
+    def get_generated_outputs(self, video_id: str, output_type: str = None) -> List[dict]:
+        """Get generated outputs for a video."""
+        if output_type:
+            self.cursor.execute(
+                "SELECT * FROM generated_outputs WHERE video_id = ? AND output_type = ?",
+                (video_id, output_type)
+            )
+        else:
+            self.cursor.execute(
+                "SELECT * FROM generated_outputs WHERE video_id = ?",
+                (video_id,)
+            )
+        rows = self.cursor.fetchall()
+        results = []
+        for row in rows:
+            result = dict(row)
+            result["metadata"] = json.loads(result["metadata"])
+            results.append(result)
+        return results
+
+    def delete_video(self, id: str) -> bool:
+        """Delete a video and all associated data."""
+        try:
+            # Get transcript IDs for the video
+            self.cursor.execute("SELECT id FROM transcripts WHERE video_id = ?", (id,))
+            transcript_ids = [row[0] for row in self.cursor.fetchall()]
+            
+            # Delete transcript chunks
+            for transcript_id in transcript_ids:
+                self.cursor.execute(
+                    "DELETE FROM transcript_chunks WHERE transcript_id = ?",
+                    (transcript_id,)
+                )
+            
+            # Delete transcripts
+            self.cursor.execute("DELETE FROM transcripts WHERE video_id = ?", (id,))
+            
+            # Delete generated outputs
+            self.cursor.execute("DELETE FROM generated_outputs WHERE video_id = ?", (id,))
+            
+            # Delete video
+            self.cursor.execute("DELETE FROM videos WHERE id = ?", (id,))
+            
+            self.conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting video: {str(e)}")
+            return False
+
     def __del__(self):
         self.conn.close()

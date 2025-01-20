@@ -82,3 +82,50 @@ class BaseDB(ABC):
     def delete_analysis_result(self, analysis_id: str) -> bool:
         """Delete an analysis result."""
         pass
+
+    @abstractmethod
+    def add_video(self, id: str, video_id: str, collection_id: str, metadata: dict = {}, created_at: int = None) -> None:
+        """Add a new video record."""
+        pass
+
+    @abstractmethod
+    def add_transcript(self, id: str, video_id: str, full_text: str, metadata: dict = {}, created_at: int = None) -> None:
+        """Add a transcript for a video."""
+        pass
+
+    @abstractmethod
+    def add_transcript_chunk(self, id: str, transcript_id: str, chunk_text: str, chunk_index: int, 
+                           embedding: list = None, metadata: dict = {}, created_at: int = None) -> None:
+        """Add a transcript chunk with embedding."""
+        pass
+
+    @abstractmethod
+    def add_generated_output(self, id: str, video_id: str, output_type: str, content: str,
+                           metadata: dict = {}, created_at: int = None) -> None:
+        """Add a generated output."""
+        pass
+
+    @abstractmethod
+    def get_video(self, id: str) -> Optional[Dict]:
+        """Get a video by ID."""
+        pass
+
+    @abstractmethod
+    def get_transcript(self, video_id: str) -> Optional[Dict]:
+        """Get a transcript by video ID."""
+        pass
+
+    @abstractmethod
+    def get_transcript_chunks(self, transcript_id: str) -> List[Dict]:
+        """Get all chunks for a transcript."""
+        pass
+
+    @abstractmethod
+    def get_generated_outputs(self, video_id: str, output_type: str = None) -> List[Dict]:
+        """Get generated outputs for a video."""
+        pass
+
+    @abstractmethod
+    def delete_video(self, id: str) -> bool:
+        """Delete a video and all associated data."""
+        pass

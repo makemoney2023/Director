@@ -23,6 +23,7 @@ class ChatNamespace(Namespace):
         self.db = None
         self.retry_attempts = 3
         self.retry_delay = 2  # seconds
+        self.operation_timeout = 300  # 5 minutes timeout for long operations
         
     def _ensure_db(self):
         """Ensure database is initialized within application context"""
@@ -181,33 +182,137 @@ class ChatNamespace(Namespace):
             }
             self.emit("chat", error_response, namespace=self.namespace)
 
-    def _get_agent_response(self, message: Dict) -> Optional[Dict]:
+    def emit_progress(self, session_id: str, conv_id: str, stage: str, progress: float):
+        """Emit progress update for long-running operations"""
+        progress_msg = {
+            "status": "progress",
+            "session_id": session_id,
+            "conv_id": conv_id,
+            "msg_type": "output",
+            "content": [{
+                "type": "progress",
+                "stage": stage,
+                "progress": progress
+            }],
+            "metadata": {
+                "timestamp": datetime.now().isoformat()
+            }
+        }
+        self.emit("chat", progress_msg, namespace=self.namespace)
+
+    def emit_timeout_error(self, session_id: str, conv_id: str, operation: str):
+        """Emit timeout error message"""
+        error_msg = {
+            "status": "error",
+            "session_id": session_id,
+            "conv_id": conv_id,
+            "msg_type": "output",
+            "content": [{
+                "type": "error",
+                "text": f"Operation {operation} timed out after {self.operation_timeout} seconds"
+            }],
+            "metadata": {
+                "timestamp": datetime.now().isoformat(),
+                "error_type": "OperationTimeout"
+            }
+        }
+        self.emit("chat", error_msg, namespace=self.namespace)
+
+    def cleanup_failed_operation(self, session_id: str, video_id: str = None):
+        """Clean up resources after a failed operation"""
+        try:
+            # Ensure db is initialized
+            self._ensure_db()
+            
+            # Delete any partial analysis results
+            if video_id:
+                self.db.delete_video(video_id)
+            
+            # Delete any partial session data
+            self.db.delete_session(session_id)
+            
+            logger.info(f"Cleaned up failed operation for session {session_id}")
+            
+        except Exception as e:
+            logger.error(f"Error during cleanup: {str(e)}")
+
+    async def _get_agent_response(self, message: Dict) -> Optional[Dict]:
         """Get response from appropriate agent based on message"""
         
-        # Get the first agent from the list
-        agent_name = message.get("agents", [])[0] if message.get("agents") else None
-        
-        # Handle special cases that bypass the reasoning engine
-        if agent_name in ["sales_prompt_extractor", "bland_ai"]:
-            # Get the command from the text content
-            text = message.get("content", [{}])[0].get("text", "")
+        try:
+            # Get the first agent from the list
+            agent_name = message.get("agents", [])[0] if message.get("agents") else None
+            session_id = message.get("session_id")
+            conv_id = message.get("conv_id")
+            video_id = message.get("video_id")
             
-            # For sales prompt extractor, always use "analyze"
-            if agent_name == "sales_prompt_extractor":
-                command = "analyze"
-            else:
-                # For bland_ai, parse the command after @bland_ai
-                command = text.replace("@bland_ai", "").strip()
-            
-            # Create agent instance
-            agent = self.chat_handler.get_agent(
-                agent_name,
-                session=self.session,
-                input_message=message
-            )
-            
-            if not agent:
-                return None
+            # Handle special cases that bypass the reasoning engine
+            if agent_name in ["sales_prompt_extractor", "bland_ai"]:
+                # Start timeout timer
+                start_time = time.time()
                 
-            # Run the agent with the command
-            return agent.run(command)
+                # For video analysis, emit progress updates
+                if agent_name == "sales_prompt_extractor":
+                    try:
+                        self.emit_progress(session_id, conv_id, "Initializing analysis", 0.0)
+                        
+                        # Check timeout between operations
+                        if time.time() - start_time > self.operation_timeout:
+                            self.emit_timeout_error(session_id, conv_id, "video analysis")
+                            self.cleanup_failed_operation(session_id, video_id)
+                            return None
+                            
+                        self.emit_progress(session_id, conv_id, "Processing transcript", 0.25)
+                        
+                        if time.time() - start_time > self.operation_timeout:
+                            self.emit_timeout_error(session_id, conv_id, "transcript processing")
+                            self.cleanup_failed_operation(session_id, video_id)
+                            return None
+                            
+                        self.emit_progress(session_id, conv_id, "Generating embeddings", 0.5)
+                        
+                        if time.time() - start_time > self.operation_timeout:
+                            self.emit_timeout_error(session_id, conv_id, "embedding generation")
+                            self.cleanup_failed_operation(session_id, video_id)
+                            return None
+                            
+                        self.emit_progress(session_id, conv_id, "Analyzing sales techniques", 0.75)
+                        
+                        if time.time() - start_time > self.operation_timeout:
+                            self.emit_timeout_error(session_id, conv_id, "sales analysis")
+                            self.cleanup_failed_operation(session_id, video_id)
+                            return None
+                            
+                        self.emit_progress(session_id, conv_id, "Generating voice prompts", 0.9)
+                        
+                    except Exception as e:
+                        logger.error(f"Error during video analysis: {str(e)}")
+                        self.cleanup_failed_operation(session_id, video_id)
+                        return None
+                
+                # Get the command from the text content
+                text = message.get("content", [{}])[0].get("text", "")
+                
+                # For sales prompt extractor, always use "analyze"
+                if agent_name == "sales_prompt_extractor":
+                    command = "analyze"
+                else:
+                    # For bland_ai, parse the command after @bland_ai
+                    command = text.replace("@bland_ai", "").strip()
+                
+                # Create agent instance
+                agent = self.chat_handler.get_agent(
+                    agent_name,
+                    session=self.session,
+                    input_message=message
+                )
+                
+                if not agent:
+                    return None
+                    
+                # Run the agent with the command
+                return agent.run(command)
+
+        except Exception as e:
+            logger.error(f"Error in agent response: {str(e)}")
+            return None
