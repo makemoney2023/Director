@@ -7,8 +7,13 @@ import tiktoken
 
 class SupabaseVectorStore:
     def __init__(self):
-        url: str = os.environ.get("SUPABASE_URL")
-        key: str = os.environ.get("SUPABASE_KEY")
+        project_ref: str = os.environ.get("SUPABASE_PROJECT_REF")
+        key: str = os.environ.get("SUPABASE_ANON_KEY")
+        if not project_ref or not key:
+            raise ValueError(
+                "Supabase configuration missing. Please set SUPABASE_PROJECT_REF and SUPABASE_ANON_KEY environment variables."
+            )
+        url = f"https://{project_ref}.supabase.co"
         self.supabase: Client = create_client(url, key)
         self.openai = OpenAI()
         self.embedding_model = "text-embedding-3-small"

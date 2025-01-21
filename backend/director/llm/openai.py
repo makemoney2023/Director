@@ -1,5 +1,7 @@
 import json
+import time
 from enum import Enum
+from openai import OpenAI, RateLimitError, APIError, APITimeoutError
 
 from pydantic import Field, field_validator, FieldValidationInfo
 from pydantic_settings import SettingsConfigDict
@@ -18,6 +20,8 @@ class OpenAIChatModel(str, Enum):
     GPT4 = "gpt-4"
     GPT4_32K = "gpt-4-32k"
     GPT4_TURBO = "gpt-4-turbo"
+    GPT4_TURBO_PREVIEW = "gpt-4-turbo-preview"
+    GPT35_TURBO = "gpt-3.5-turbo"
     GPT4o = "gpt-4o-2024-11-20"
     GPT4o_MINI = "gpt-4o-mini"
 
@@ -34,7 +38,7 @@ class OpenaiConfig(BaseLLMConfig):
     api_key: str = ""
     api_base: str = "https://api.openai.com/v1"
     chat_model: str = Field(default=OpenAIChatModel.GPT4o)
-    max_tokens: int = 4096
+    max_tokens: int = 8096
 
     @field_validator("api_key")
     @classmethod
@@ -164,46 +168,95 @@ class OpenAI(BaseLLM):
                 # Default to JSON response format if not properly specified
                 params["response_format"] = {"type": "json_object"}
 
-        try:
-            response = self.client.chat.completions.create(**params)
-            content = response.choices[0].message.content
-            # Validate JSON response if response_format is specified
-            if response_format and content:
-                try:
-                    content = json.loads(content)
-                    content = json.dumps(content)  # Re-serialize to ensure valid JSON string
-                except json.JSONDecodeError as e:
-                    return LLMResponse(
-                        content=str(e),
-                        status=LLMResponseStatus.ERROR,
-                        error_type="JSONDecodeError"
-                    )
-        except Exception as e:
-            print(f"Error: {e}")
-            return LLMResponse(
-                content=f"Error: {e}",
-                status=LLMResponseStatus.ERROR,
-                error_type=type(e).__name__
-            )
+        max_retries = 3
+        base_delay = 1  # Base delay in seconds
 
-        return LLMResponse(
-            content=content or "",
-            tool_calls=[
-                {
-                    "id": tool_call.id,
-                    "tool": {
-                        "name": tool_call.function.name,
-                        "arguments": json.loads(tool_call.function.arguments),
-                    },
-                    "type": tool_call.type,
-                }
-                for tool_call in response.choices[0].message.tool_calls
-            ]
-            if response.choices[0].message.tool_calls
-            else [],
-            finish_reason=response.choices[0].finish_reason,
-            send_tokens=response.usage.prompt_tokens,
-            recv_tokens=response.usage.completion_tokens,
-            total_tokens=response.usage.total_tokens,
-            status=LLMResponseStatus.SUCCESS,
-        )
+        for attempt in range(max_retries):
+            try:
+                response = self.client.chat.completions.create(**params)
+                content = response.choices[0].message.content
+                
+                # Validate JSON response if response_format is specified
+                if response_format and content:
+                    try:
+                        content = json.loads(content)
+                        content = json.dumps(content)  # Re-serialize to ensure valid JSON string
+                    except json.JSONDecodeError as e:
+                        return LLMResponse(
+                            content="",
+                            status=LLMResponseStatus.ERROR,
+                            error=str(e),
+                            error_type="JSONDecodeError"
+                        )
+                
+                # Successful response
+                return LLMResponse(
+                    content=content or "",
+                    tool_calls=[
+                        {
+                            "id": tool_call.id,
+                            "tool": {
+                                "name": tool_call.function.name,
+                                "arguments": json.loads(tool_call.function.arguments),
+                            },
+                            "type": tool_call.type,
+                        }
+                        for tool_call in response.choices[0].message.tool_calls
+                    ]
+                    if response.choices[0].message.tool_calls
+                    else [],
+                    finish_reason=response.choices[0].finish_reason,
+                    send_tokens=response.usage.prompt_tokens,
+                    recv_tokens=response.usage.completion_tokens,
+                    total_tokens=response.usage.total_tokens,
+                    status=LLMResponseStatus.SUCCESS,
+                    error="",
+                    error_type=""
+                )
+
+            except RateLimitError as e:
+                error_msg = f"Rate limit exceeded: {str(e)}"
+                if attempt < max_retries - 1:
+                    delay = (base_delay * (2 ** attempt))  # Exponential backoff
+                    time.sleep(delay)
+                    continue
+                return LLMResponse(
+                    content="",
+                    status=LLMResponseStatus.ERROR,
+                    error=error_msg,
+                    error_type="RateLimitError"
+                )
+
+            except APITimeoutError as e:
+                error_msg = f"Request timed out: {str(e)}"
+                if attempt < max_retries - 1:
+                    continue
+                return LLMResponse(
+                    content="",
+                    status=LLMResponseStatus.ERROR,
+                    error=error_msg,
+                    error_type="TimeoutError"
+                )
+
+            except APIError as e:
+                error_msg = f"API error: {str(e)}"
+                if attempt < max_retries - 1 and "internal_server_error" in str(e).lower():
+                    time.sleep(base_delay)
+                    continue
+                return LLMResponse(
+                    content="",
+                    status=LLMResponseStatus.ERROR,
+                    error=error_msg,
+                    error_type="APIError"
+                )
+
+            except Exception as e:
+                error_msg = str(e)
+                error_type = type(e).__name__
+                print(f"Error: {error_msg}")
+                return LLMResponse(
+                    content="",
+                    status=LLMResponseStatus.ERROR,
+                    error=error_msg,
+                    error_type=error_type
+                )

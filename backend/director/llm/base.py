@@ -20,6 +20,8 @@ class LLMResponse(BaseModel):
     total_tokens: int = 0
     finish_reason: str = ""
     status: int = LLMResponseStatus.ERROR
+    error: str = ""
+    error_type: str = ""
 
 
 class BaseLLMConfig(BaseSettings):

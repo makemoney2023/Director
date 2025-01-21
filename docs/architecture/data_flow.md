@@ -140,6 +140,80 @@ except Exception as e:
 - Implement performance metrics
 - Track error rates and types
 
+## Supabase Integration and Data Flow
+
+### Database Schema and Relationships
+```typescript
+interface Tables {
+  videos: {
+    id: UUID;                  // Primary key
+    video_id: string;          // External video identifier
+    collection_id: string;     // Collection grouping
+    metadata: JSON;            // Additional video metadata
+    created_at: Timestamp;
+  };
+  
+  transcripts: {
+    id: UUID;                  // Primary key
+    video_id: UUID;            // References videos(id)
+    full_text: string;         // Complete transcript
+    metadata: JSON;            // Processing metadata
+    created_at: Timestamp;
+  };
+  
+  transcript_chunks: {
+    id: UUID;                  // Primary key
+    transcript_id: UUID;       // References transcripts(id)
+    chunk_text: string;        // Text segment
+    chunk_index: number;       // Order in transcript
+    embedding: vector(1536);   // OpenAI embedding
+    metadata: JSON;            // Chunk metadata
+    created_at: Timestamp;
+  };
+  
+  generated_outputs: {
+    id: UUID;                  // Primary key
+    video_id: UUID;           // References videos(id)
+    output_type: string;      // e.g., 'sales_prompt', 'voice_prompt'
+    content: string;          // Generated content
+    metadata: JSON;           // Generation metadata
+    created_at: Timestamp;
+  };
+}
+```
+
+### Data Flow Stages
+
+1. **Video Processing**
+   - Frontend initiates video selection
+   - Backend creates video entry in `videos` table
+   - Unique UUID generated for video tracking
+
+2. **Transcript Processing**
+   - Video transcribed and stored in `transcripts` table
+   - Text split into chunks for embedding
+   - Embeddings stored in `transcript_chunks` table
+   - Vector similarity search enabled for content retrieval
+
+3. **Content Generation**
+   - Agents process video and generate content
+   - Results stored in `generated_outputs` table
+   - Real-time updates sent via Socket.IO
+   - Frontend displays results in appropriate components
+
+4. **Error Recovery**
+   - Failed operations logged with metadata
+   - Automatic retry for failed database operations
+   - Session state preserved for recovery
+   - Frontend displays appropriate error states
+
+### Environment Configuration
+```env
+# Standardized Supabase Variables
+SUPABASE_PROJECT_REF=<project_reference>    # Project reference for URL construction
+SUPABASE_ANON_KEY=<anon_key>               # Anonymous client key
+```
+
 ## Edge Functions Integration
 
 ### Synchronous Processing Flow
@@ -147,8 +221,8 @@ The Edge Functions integration follows a synchronous request-response pattern:
 
 1. **Initial Request**
    - Frontend initiates video analysis request
-   - Backend processes transcript and embeddings
-   - Direct synchronous calls to Edge Functions
+   - Backend validates video data
+   - Creates entries in Supabase tables
 
 2. **Edge Function Processing**
    ```typescript
@@ -157,30 +231,32 @@ The Edge Functions integration follows a synchronous request-response pattern:
      data: {
        result: any;
        processing_time: number;
+       video_id: UUID;        // Reference to videos table
+       output_type: string;   // Type of generated content
      };
      error?: {
        message: string;
        code: string;
+       metadata?: any;
      };
    }
    ```
 
 3. **Data Flow Stages**
-   - Transcript Processing → Embeddings → Structured Data → Voice Prompt
-   - Each stage waits for completion before proceeding
-   - Results stored in Supabase tables for persistence
+   - Transcript Processing → Embeddings Generation
+   - Content Analysis → Structured Data Extraction
+   - Voice Prompt Generation
+   - Each stage updates Supabase tables with results
+   - Real-time progress updates via Socket.IO
 
 4. **Response Handling**
-   - Backend aggregates results from all stages
-   - Returns complete analysis to frontend
-   - Frontend updates UI with all data simultaneously
+   - Results stored in `generated_outputs` table
+   - Frontend subscribes to updates via Socket.IO
+   - UI components render based on output_type
+   - Error states handled with fallback displays
 
 5. **Error Management**
-   - Immediate error reporting from Edge Functions
-   - Backend handles errors and returns appropriate response
-   - No automatic retries (managed by backend if needed)
-
-### Integration with Existing Flow
-- Edge Functions extend the existing chat handler functionality
-- Maintains compatibility with current WebSocket architecture
-- Preserves session management and error recovery mechanisms 
+   - Detailed error logging with stack traces
+   - Failed operations tracked in metadata
+   - Automatic retry for transient failures
+   - User-friendly error messages in UI 

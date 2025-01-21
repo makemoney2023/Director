@@ -443,17 +443,33 @@ For each section, include:
             # Generate analysis prompt
             prompt = self._get_analysis_prompt(processed_transcript, "full")
             
-            # Get analysis from OpenAI
-            response = self.analysis_llm.chat_completions(
-                messages=prompt
-            )
+            # Get analysis from OpenAI with retries
+            max_retries = 3
+            retry_delay = 2
             
-            if response.status == LLMResponseStatus.SUCCESS:
-                return response.content
-            else:
-                logger.error(f"Analysis failed: {response.error}")
-                return None
-                
+            for attempt in range(max_retries):
+                try:
+                    response = self.analysis_llm.chat_completions(
+                        messages=prompt
+                    )
+                    
+                    if response.status == LLMResponseStatus.SUCCESS:
+                        return response.content
+                    else:
+                        error_msg = response.error if hasattr(response, 'error') else "Unknown error"
+                        logger.error(f"Analysis failed (attempt {attempt + 1}/{max_retries}): {error_msg}")
+                        if attempt < max_retries - 1:
+                            time.sleep(retry_delay)
+                            continue
+                        return None
+                        
+                except Exception as e:
+                    logger.error(f"Error in content analysis (attempt {attempt + 1}/{max_retries}): {str(e)}")
+                    if attempt < max_retries - 1:
+                        time.sleep(retry_delay)
+                        continue
+                    return None
+                    
         except Exception as e:
             logger.error(f"Error in content analysis: {str(e)}")
             return None
