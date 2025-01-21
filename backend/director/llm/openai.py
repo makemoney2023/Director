@@ -65,6 +65,14 @@ class OpenAI(BaseLLM):
 
         self.client = openai.OpenAI(api_key=self.api_key, base_url=self.api_base)
 
+    @property
+    def chat_model(self) -> str:
+        return self._chat_model
+
+    @chat_model.setter
+    def chat_model(self, value: str):
+        self._chat_model = value
+
     def init_langfuse(self):
         from langfuse.decorators import observe
 

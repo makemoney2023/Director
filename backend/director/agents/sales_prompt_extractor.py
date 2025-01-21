@@ -33,6 +33,7 @@ from director.agents.structured_data_agent import StructuredDataAgent
 from director.agents.yaml_configuration_agent import YAMLConfigurationAgent
 from director.core.database import Analysis, StructuredData, YAMLConfig, VoicePrompt, Session as DBSession
 from director.utils.supabase import SupabaseVectorStore
+from director.tools.sales_analysis_tool import SalesAnalysisTool
 
 # Configure UTF-8 encoding for stdout
 if sys.stdout.encoding != 'utf-8':
@@ -104,20 +105,23 @@ class SalesAnalysisContent(TextContent):
     """Content type for sales analysis results"""
     analysis_data: Dict = {}
     anthropic_response: Optional[AnthropicResponse] = None
-    voice_prompt: Optional[str] = None
+    voice_prompt: str = ""
+    structured_data: Dict = {}
     
-    def __init__(self, analysis_data: Dict = None, anthropic_response: Dict = None, voice_prompt: str = None, **kwargs):
+    def __init__(self, analysis_data: Dict = None, anthropic_response: Dict = None, voice_prompt: str = "", structured_data: Dict = None, **kwargs):
         super().__init__(**kwargs)
         self.analysis_data = analysis_data if analysis_data is not None else {}
         self.anthropic_response = AnthropicResponse(**anthropic_response) if anthropic_response else None
         self.voice_prompt = voice_prompt
+        self.structured_data = structured_data if structured_data is not None else {}
 
     def to_dict(self) -> Dict:
         base_dict = super().to_dict()
         base_dict.update({
             "analysis_data": self.analysis_data,
             "anthropic_response": self.anthropic_response.dict() if self.anthropic_response else None,
-            "voice_prompt": self.voice_prompt
+            "voice_prompt": self.voice_prompt,
+            "structured_data": self.structured_data
         })
         return base_dict
 
@@ -183,10 +187,55 @@ class SalesPromptExtractorAgent(BaseAgent):
         self.voice_prompt_agent = VoicePromptGenerationAgent(session)
         self.structured_data_agent = StructuredDataAgent(session)
         self.yaml_config_agent = YAMLConfigurationAgent(session)
+        self.logger = logger  # Initialize logger
+        self.sales_tool = SalesAnalysisTool(api_key=self.llm.api_key)
         
     def _get_db_session(self):
         """Get a new database session for thread-safe operations"""
         return DBSession()
+
+    ANALYSIS_FUNCTION = {
+        "name": "analyze_sales_conversation",
+        "description": "Analyze a sales conversation and return analysis, structured data, and voice prompt",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "analysis": {
+                    "type": "string",
+                    "description": "Detailed markdown analysis covering key points, techniques, and insights"
+                },
+                "structured_data": {
+                    "type": "object",
+                    "properties": {
+                        "sales_techniques": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "name": {"type": "string"},
+                                    "examples": {"type": "array", "items": {"type": "string"}},
+                                    "effectiveness": {"type": "string"}
+                                }
+                            }
+                        },
+                        "key_metrics": {
+                            "type": "object",
+                            "properties": {
+                                "engagement_level": {"type": "string"},
+                                "objection_handling_score": {"type": "string"},
+                                "communication_clarity": {"type": "string"}
+                            }
+                        }
+                    }
+                },
+                "voice_prompt": {
+                    "type": "string",
+                    "description": "A concise, actionable prompt that starts with 'Hello!' and guides an AI agent in replicating successful techniques. Example: 'Hello! In your conversations, ensure to [key approach]. When customers [situation], respond with [technique]. Always maintain [style] and focus on [objective]. Thank you!'"
+                }
+            },
+            "required": ["analysis", "structured_data", "voice_prompt"]
+        }
+    }
 
     def _get_analysis_prompt(self, transcript: str, analysis_type: str) -> List[Dict[str, str]]:
         """Generate appropriate prompt based on analysis type"""
@@ -203,52 +252,28 @@ Your analysis must include:
 4. Objection handling approaches demonstrated
 5. Voice agent guidelines based on successful patterns
 
-Format your response with clear sections and specific examples."""
+Provide your response in a structured format with:
+- A detailed markdown analysis
+- Structured data about sales techniques and metrics
+- A voice prompt that incorporates the successful patterns identified
+
+The voice prompt MUST be a concise, actionable prompt that guides an AI agent in replicating the successful techniques identified. 
+Format it as a direct instruction to the AI, starting with a greeting and including key approaches to use.
+
+IMPORTANT: Your response MUST include all three components:
+1. analysis (string): Detailed markdown analysis
+2. structured_data (object): Structured data about techniques and metrics
+3. voice_prompt (string): A concise, actionable prompt starting with "Hello!" and including specific instructions
+
+Example voice prompt format:
+"Hello! In your conversations, ensure to [key approach 1]. When customers [situation], respond with [technique]. Always maintain [style] and focus on [objective]. Thank you!"
+"""
                 },
                 {
-                    "role": "user", 
-                    "content": f"""Analyze this sales conversation transcript and provide detailed insights in these specific areas:
+                    "role": "user",
+                    "content": f"""Analyze this sales conversation transcript and provide detailed insights:
 
-SUMMARY:
-• Provide a brief overview of what the video/conversation is about
-• List the main topics covered
-• Identify the key learning objectives
-• Note any unique or particularly effective approaches demonstrated
-
-DETAILED ANALYSIS:
-
-1. Sales Techniques Used
-• List each specific technique identified
-• Include exact quotes or examples from the transcript
-• Explain when and why each technique was effective
-• Note the context and timing of each technique
-
-2. Communication Strategies
-• Document specific phrases and approaches used
-• Include exact quotes showing each strategy
-• Analyze tone, pacing, and style choices
-• Note which strategies were most effective and why
-
-3. Objection Handling
-• List each objection encountered
-• Document exactly how each was addressed
-• Include specific phrases and responses used
-• Analyze why the handling was effective or not
-
-4. Voice Agent Guidelines
-• Provide specific phrases to use or avoid
-• Include exact response templates from successful exchanges
-• Document tone and style recommendations
-• List specific do's and don'ts with examples
-
-Transcript to analyze:
-{transcript}
-
-For each section, include:
-- Specific techniques/strategies by name
-- Exact quotes and examples from the transcript
-- When and why each approach works best
-- Clear guidelines for implementation"""
+{transcript}"""
                 }
             ]
             logger.info("Analysis prompt generated successfully")
@@ -258,72 +283,50 @@ For each section, include:
             raise
 
     def _store_analysis_response(self, content: str, status: str = "success", metadata: Dict = None, 
-                               structured_data: Dict = None, voice_prompt: str = None, yaml_config: Dict = None) -> None:
-        """Store analysis response and related data in the database"""
+                               structured_data: Dict = None, voice_prompt: str = None) -> None:
+        """Store analysis response in Supabase"""
         try:
-            with session_scope() as db_session:
-                # Create or update Analysis record
-                analysis = db_session.query(Analysis).filter_by(
-                    video_id=self.video_id,
-                    collection_id=self.collection_id
-                ).first()
+            # Get video_id and collection_id from session
+            video_id = getattr(self.session, 'video_id', None)
+            collection_id = getattr(self.session, 'collection_id', None)
+            
+            if not video_id or not collection_id:
+                raise ValueError("Missing video_id or collection_id in session")
+            
+            # Store in Supabase
+            try:
+                # Store analysis text
+                self.vector_store.store_generated_output(
+                    video_id=video_id,
+                    collection_id=collection_id,
+                    output_type="analysis",
+                    content=content
+                )
+                logger.info("Stored analysis text in Supabase")
                 
-                if not analysis:
-                    analysis = Analysis(
-                        video_id=self.video_id,
-                        collection_id=self.collection_id,
-                        raw_analysis=content,
-                        status=status,
-                        meta_data=metadata or {}
-                    )
-                    db_session.add(analysis)
-                else:
-                    analysis.raw_analysis = content
-                    analysis.status = status
-                    analysis.meta_data = metadata or {}
-                
-                # Store structured data if provided
+                # Store structured data
                 if structured_data:
-                    if not analysis.structured_data:
-                        analysis.structured_data = StructuredData(data=structured_data)
-                    else:
-                        analysis.structured_data.data = structured_data
-                
-                # Store YAML config if provided
-                if yaml_config:
-                    if not analysis.yaml_config:
-                        analysis.yaml_config = YAMLConfig(config=yaml_config)
-                    else:
-                        analysis.yaml_config.config = yaml_config
-                
-                # Store voice prompt if provided
-                if voice_prompt:
-                    if not analysis.voice_prompt:
-                        analysis.voice_prompt = VoicePrompt(prompt=voice_prompt)
-                    else:
-                        analysis.voice_prompt.prompt = voice_prompt
-                
-                # Commit changes to database
-                db_session.commit()
-                
-                # Update output message for UI
-                if not self.output_message.content:
-                    text_content = SalesAnalysisContent(
-                        agent_name=self.agent_name,
-                        status=MsgStatus.progress,
-                        status_message="Analysis stored in database..."
+                    self.vector_store.store_generated_output(
+                        video_id=video_id,
+                        collection_id=collection_id,
+                        output_type="structured_data",
+                        content=json.dumps(structured_data)
                     )
-                    self.output_message.content.append(text_content)
-                else:
-                    text_content = self.output_message.content[-1]
+                    logger.info("Stored structured data in Supabase")
                 
-                text_content.text = content
-                text_content.status = MsgStatus.success if status == "success" else MsgStatus.error
-                text_content.status_message = "Analysis stored successfully" if status == "success" else "Error storing analysis"
+                # Store voice prompt
+                if voice_prompt:
+                    self.vector_store.store_generated_output(
+                        video_id=video_id,
+                        collection_id=collection_id,
+                        output_type="voice_prompt",
+                        content=voice_prompt
+                    )
+                    logger.info("Stored voice prompt in Supabase")
                 
-                # Push update to UI
-                self.output_message.push_update()
-                logger.info(f"Analysis response and related data stored with status: {status}")
+            except Exception as e:
+                logger.error(f"Error storing outputs in Supabase: {str(e)}")
+                raise
                 
         except Exception as e:
             logger.error(f"Error storing analysis response: {str(e)}", exc_info=True)
@@ -423,56 +426,39 @@ For each section, include:
         processed_transcript = "\n\n".join(relevant_chunks)
         return processed_transcript
 
-    def _analyze_content(self, transcript: str, video_id: str, collection_id: str) -> str:
-        """Analyze transcript content using embeddings for long transcripts"""
+    def _analyze_content(self, transcript: str) -> dict:
+        """Analyze content using the consolidated SalesAnalysisTool"""
         try:
-            # Process transcript using vector search if it's long
-            if len(transcript.split()) > 2000:  # If transcript is longer than ~2000 words
-                try:
-                    processed_transcript = self._process_long_transcript(transcript, video_id, collection_id)
-                except Exception as e:
-                    # If error is due to duplicate transcript, just use the original transcript
-                    if "'code': '23505'" in str(e) or "duplicate key value" in str(e):
-                        logger.info(f"Transcript already exists in Supabase for video {video_id}, proceeding with analysis")
-                        processed_transcript = transcript
-                    else:
-                        raise
-            else:
-                processed_transcript = transcript
+            logger.info("Starting content analysis")
+            
+            # Use the consolidated tool
+            result = self.sales_tool.analyze_conversation(transcript)
+            if not result:
+                logger.error("Failed to analyze conversation")
+                return None
                 
-            # Generate analysis prompt
-            prompt = self._get_analysis_prompt(processed_transcript, "full")
-            
-            # Get analysis from OpenAI with retries
-            max_retries = 3
-            retry_delay = 2
-            
-            for attempt in range(max_retries):
-                try:
-                    response = self.analysis_llm.chat_completions(
-                        messages=prompt
-                    )
-                    
-                    if response.status == LLMResponseStatus.SUCCESS:
-                        return response.content
-                    else:
-                        error_msg = response.error if hasattr(response, 'error') else "Unknown error"
-                        logger.error(f"Analysis failed (attempt {attempt + 1}/{max_retries}): {error_msg}")
-                        if attempt < max_retries - 1:
-                            time.sleep(retry_delay)
-                            continue
-                        return None
-                        
-                except Exception as e:
-                    logger.error(f"Error in content analysis (attempt {attempt + 1}/{max_retries}): {str(e)}")
-                    if attempt < max_retries - 1:
-                        time.sleep(retry_delay)
-                        continue
-                    return None
-                    
+            # Format the result for response
+            analysis = result.raw_analysis
+
+            # Add structured data section
+            analysis += "\n\n## Structured Data\n```json\n"
+            analysis += json.dumps(result.structured_data, indent=2)
+            analysis += "\n```\n"
+
+            # Add voice prompt section
+            analysis += "\n\n## Voice Prompt\n```\n"
+            analysis += result.voice_prompt
+            analysis += "\n```\n"
+                
+            return {
+                "analysis": analysis,
+                "structured_data": result.structured_data,
+                "voice_prompt": result.voice_prompt
+            }
+                
         except Exception as e:
-            logger.error(f"Error in content analysis: {str(e)}")
-            return None
+            logger.error(f"Error in content analysis: {str(e)}", exc_info=True)
+            raise
 
     def run(
         self,
@@ -515,104 +501,17 @@ For each section, include:
                     data={"error": "transcript_not_found"}
                 )
 
-            # Get or create analysis record
-            try:
-                with session_scope() as db_session:
-                    analysis = self._get_or_create_analysis(db_session, video_id, collection_id)
-                    
-                    if analysis.status == 'completed' and not kwargs.get('force_refresh', False):
-                        return self._process_existing_analysis(analysis, text_content)
-                    
-                    # Analyze content using embeddings
-                    analysis_text = self._analyze_content(transcript, video_id, collection_id)
-                    if not analysis_text:
-                        return AgentResponse(
-                            status=AgentStatus.ERROR,
-                            message="Failed to analyze content",
-                            data={"error": "analysis_failed"}
-                        )
-                    
-                    # Generate voice prompt
-                    voice_prompt = self._generate_voice_prompt(analysis_text)
-                    
-                    # Generate structured data
-                    structured_data = self._generate_structured_output(analysis_text, voice_prompt)
-                    
-                    # Store in Supabase
-                    try:
-                        self.vector_store.store_generated_output(
-                            video_id=video_id,
-                            collection_id=collection_id,
-                            output_type="structured_data",
-                            content=json.dumps(structured_data)
-                        )
-                        self.vector_store.store_generated_output(
-                            video_id=video_id,
-                            collection_id=collection_id,
-                            output_type="voice_prompt",
-                            content=voice_prompt
-                        )
-                    except Exception as e:
-                        logger.warning(f"Failed to store outputs in Supabase: {str(e)}")
-                    
-                    # Update analysis record
-                    analysis.raw_analysis = analysis_text
-                    analysis.status = 'completed'
-                    analysis.meta_data = {
-                        "structured_data": structured_data,
-                        "voice_prompt": voice_prompt
-                    }
-                    
-                    # Also store in structured_data and voice_prompt tables
-                    if not analysis.structured_data:
-                        analysis.structured_data = StructuredData(data=structured_data)
-                    else:
-                        analysis.structured_data.data = structured_data
-                        
-                    if not analysis.voice_prompt:
-                        analysis.voice_prompt = VoicePrompt(prompt=voice_prompt)
-                    else:
-                        analysis.voice_prompt.prompt = voice_prompt
-                        
-                    db_session.commit()
-                    
-                    return AgentResponse(
-                        status=AgentStatus.SUCCESS,
-                        message="Analysis completed successfully",
-                        data={
-                            "analysis": analysis_text,
-                            "structured_data": structured_data,
-                            "voice_prompt": voice_prompt
-                        }
-                    )
-            except Exception as e:
-                error_msg = str(e)
-                if "'code': '23505'" in error_msg or "duplicate key value" in error_msg:
-                    # Handle duplicate key error by fetching existing analysis
-                    with session_scope() as db_session:
-                        analysis = db_session.query(Analysis).filter_by(
-                            video_id=video_id, 
-                            collection_id=collection_id
-                        ).first()
-                        if analysis and analysis.status == 'completed':
-                            return self._process_existing_analysis(analysis, text_content)
-                
-                logger.error(f"Error in sales prompt extraction: {error_msg}", exc_info=True)
-                return AgentResponse(
-                    status=AgentStatus.ERROR,
-                    message=f"Failed to complete analysis: {error_msg}",
-                    data={"error": error_msg}
-                )
+            # Process new analysis directly
+            return self._process_new_analysis(transcript, Analysis(video_id=video_id, collection_id=collection_id), text_content)
 
         except Exception as e:
-            logger.error(f"Error in sales prompt extraction: {str(e)}", exc_info=True)
-            text_content.status = MsgStatus.error
-            text_content.status_message = f"Error: {str(e)}"
+            logger.error(f"Error in sales prompt extraction: {str(e)}")
             text_content.text = f"Failed to complete analysis: {str(e)}"
-            self.output_message.push_update()
+            text_content.status = MsgStatus.error
+            text_content.status_message = str(e)
             return AgentResponse(
                 status=AgentStatus.ERROR,
-                message=str(e),
+                message=f"Failed to complete analysis: {str(e)}",
                 data={"error": str(e)}
             )
 
@@ -1511,7 +1410,7 @@ VOICE PROMPT:
                 )
             
             # If not completed, treat as new analysis
-            return self._process_new_analysis(self._get_transcript(analysis.video_id), analysis, text_content)
+            return self._process_new_analysis(self._get_transcript(analysis.video_id, analysis.collection_id), analysis, text_content)
         except Exception as e:
             logger.error(f"Error processing existing analysis: {str(e)}", exc_info=True)
             # Update text content for error case
@@ -1529,8 +1428,8 @@ VOICE PROMPT:
         """Process a new analysis"""
         try:
             # Analyze content
-            analysis_text = self._analyze_content(transcript, analysis.video_id, analysis.collection_id)
-            if not analysis_text:
+            analysis_result = self._analyze_content(transcript)
+            if not analysis_result:
                 text_content.text = "Failed to analyze content"
                 text_content.status = MsgStatus.error
                 text_content.status_message = "Analysis failed"
@@ -1540,106 +1439,37 @@ VOICE PROMPT:
                     data={"error": "analysis_failed"}
                 )
             
-            # Generate voice prompt
-            voice_prompt = self._generate_voice_prompt(analysis_text)
+            # Set video_id and collection_id from analysis object
+            self.session.video_id = analysis.video_id
+            self.session.collection_id = analysis.collection_id
             
-            # Generate structured data
-            structured_data = self._generate_structured_output(analysis_text, voice_prompt)
+            # Store results
+            self._store_analysis_response(
+                content=analysis_result["analysis"],
+                structured_data=analysis_result["structured_data"],
+                voice_prompt=analysis_result["voice_prompt"]
+            )
             
-            # Store in Supabase
-            try:
-                self.vector_store.store_generated_output(
-                    video_id=analysis.video_id,
-                    collection_id=analysis.collection_id,
-                    output_type="structured_data",
-                    content=json.dumps(structured_data)
-                )
-                self.vector_store.store_generated_output(
-                    video_id=analysis.video_id,
-                    collection_id=analysis.collection_id,
-                    output_type="voice_prompt",
-                    content=voice_prompt
-                )
-                logger.info(f"Stored outputs in Supabase for video {analysis.video_id}")
-            except Exception as e:
-                logger.warning(f"Failed to store outputs in Supabase: {str(e)}")
-            
-            # Update analysis record
-            analysis.raw_analysis = analysis_text
-            analysis.status = 'completed'
-            analysis.meta_data = {
-                "structured_data": structured_data,
-                "voice_prompt": voice_prompt
-            }
-            
-            # Also store in structured_data and voice_prompt tables
-            if not analysis.structured_data:
-                analysis.structured_data = StructuredData(data=structured_data)
-            else:
-                analysis.structured_data.data = structured_data
-                
-            if not analysis.voice_prompt:
-                analysis.voice_prompt = VoicePrompt(prompt=voice_prompt)
-            else:
-                analysis.voice_prompt.prompt = voice_prompt
-            
-            # Format complete response
-            complete_response = f"""Analysis completed successfully:
-
-{analysis_text}
-
-STRUCTURED DATA:
-```json
-{json.dumps(structured_data, indent=2)}
-```
-
-VOICE PROMPT:
-```
-{voice_prompt}
-```"""
-
-            # Update text content
-            text_content.text = complete_response
+            # Update text content for frontend
+            text_content.text = analysis_result["analysis"]
+            text_content.structured_data = analysis_result["structured_data"]
+            text_content.voice_prompt = analysis_result["voice_prompt"]
             text_content.status = MsgStatus.success
             text_content.status_message = "Analysis completed successfully"
             
             return AgentResponse(
                 status=AgentStatus.SUCCESS,
                 message="Analysis completed successfully",
-                data={
-                    "analysis": analysis_text,
-                    "structured_data": structured_data,
-                    "voice_prompt": voice_prompt
-                }
+                data=analysis_result
             )
-            
+                
         except Exception as e:
-            logger.error(f"Error processing new analysis: {str(e)}", exc_info=True)
-            # Update text content for error case
+            logger.error(f"Error processing analysis: {str(e)}")
             text_content.text = f"Error processing analysis: {str(e)}"
             text_content.status = MsgStatus.error
             text_content.status_message = str(e)
-            
             return AgentResponse(
                 status=AgentStatus.ERROR,
                 message=f"Error processing analysis: {str(e)}",
                 data={"error": str(e)}
             )
-
-    def _get_or_create_analysis(self, db_session: SQLAlchemySession, video_id: str, collection_id: str) -> Analysis:
-        """Get existing analysis or create a new one"""
-        analysis = db_session.query(Analysis).filter(
-            Analysis.video_id == video_id,
-            Analysis.collection_id == collection_id
-        ).first()
-        
-        if not analysis:
-            analysis = Analysis(
-                video_id=video_id,
-                collection_id=collection_id,
-                status='processing'
-            )
-            db_session.add(analysis)
-            db_session.commit()
-        
-        return analysis

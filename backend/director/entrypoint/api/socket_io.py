@@ -4,7 +4,7 @@ import logging
 import time
 from typing import Dict, Optional
 
-from flask import current_app
+from flask import current_app, request
 from flask_socketio import Namespace, emit
 from flask_socketio import disconnect
 
@@ -111,7 +111,7 @@ class ChatNamespace(Namespace):
                 )
                 if existing_response:
                     logger.info("Found existing response, returning from database")
-                    self.emit("chat", existing_response)
+                    self.emit("chat", existing_response, room=request.sid)
                     return
             
             # Run the chat handler and get the response
@@ -152,7 +152,7 @@ class ChatNamespace(Namespace):
             while retry_count < self.retry_attempts:
                 try:
                     logger.info(f"Emitting response (attempt {retry_count + 1})")
-                    self.emit("chat", response, namespace=self.namespace)
+                    self.emit("chat", response, room=request.sid)
                     break
                 except Exception as e:
                     retry_count += 1
@@ -180,7 +180,7 @@ class ChatNamespace(Namespace):
                     "error_type": type(e).__name__
                 }
             }
-            self.emit("chat", error_response, namespace=self.namespace)
+            self.emit("chat", error_response, room=request.sid)
 
     def emit_progress(self, session_id: str, conv_id: str, stage: str, progress: float):
         """Emit progress update for long-running operations"""
@@ -198,7 +198,7 @@ class ChatNamespace(Namespace):
                 "timestamp": datetime.now().isoformat()
             }
         }
-        self.emit("chat", progress_msg, namespace=self.namespace)
+        self.emit("chat", progress_msg, room=request.sid)
 
     def emit_timeout_error(self, session_id: str, conv_id: str, operation: str):
         """Emit timeout error message"""
@@ -216,7 +216,7 @@ class ChatNamespace(Namespace):
                 "error_type": "OperationTimeout"
             }
         }
-        self.emit("chat", error_msg, namespace=self.namespace)
+        self.emit("chat", error_msg, room=request.sid)
 
     def cleanup_failed_operation(self, session_id: str, video_id: str = None):
         """Clean up resources after a failed operation"""
