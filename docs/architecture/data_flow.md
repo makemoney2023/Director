@@ -307,4 +307,42 @@ The system returns a unified response containing:
 [Voice agent instructions]
 ```
 
-This format ensures consistent display and easy parsing of results. 
+## Training Data
+```json
+{
+  "examples": [
+    {
+      "input": "Question or prompt based on transcript",
+      "output": "Appropriate response from transcript"
+    },
+    ...
+  ]
+}
+```
+
+This format ensures consistent display and easy parsing of results.
+
+### Training Data Flow
+1. **Extraction Process**
+   - Transcript is processed by LLM with specialized prompt
+   - Examples are extracted using regex pattern matching
+   - Each example contains input-output pairs
+   - Examples are validated for completeness
+
+2. **Storage**
+   - Training data stored in `generated_outputs` table
+   - JSONB column allows efficient querying
+   - GIN index optimizes search performance
+   - Examples linked to original video and collection
+
+3. **Retrieval**
+   - Training data accessed via vector store
+   - Examples can be filtered by video or collection
+   - Format optimized for LLM fine-tuning
+   - Cached for improved performance
+
+4. **Quality Control**
+   - Examples validated for completeness
+   - Personal information removed
+   - Context preserved for each example
+   - Diverse example types maintained 

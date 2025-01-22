@@ -107,13 +107,17 @@ class SalesAnalysisContent(TextContent):
     anthropic_response: Optional[AnthropicResponse] = None
     voice_prompt: str = ""
     structured_data: Dict = {}
+    training_data: List[Dict] = []
     
-    def __init__(self, analysis_data: Dict = None, anthropic_response: Dict = None, voice_prompt: str = "", structured_data: Dict = None, **kwargs):
+    def __init__(self, analysis_data: Dict = None, anthropic_response: Dict = None, 
+                 voice_prompt: str = "", structured_data: Dict = None, 
+                 training_data: List[Dict] = None, **kwargs):
         super().__init__(**kwargs)
         self.analysis_data = analysis_data if analysis_data is not None else {}
         self.anthropic_response = AnthropicResponse(**anthropic_response) if anthropic_response else None
         self.voice_prompt = voice_prompt
         self.structured_data = structured_data if structured_data is not None else {}
+        self.training_data = training_data if training_data is not None else []
 
     def to_dict(self) -> Dict:
         base_dict = super().to_dict()
@@ -121,7 +125,8 @@ class SalesAnalysisContent(TextContent):
             "analysis_data": self.analysis_data,
             "anthropic_response": self.anthropic_response.dict() if self.anthropic_response else None,
             "voice_prompt": self.voice_prompt,
-            "structured_data": self.structured_data
+            "structured_data": self.structured_data,
+            "training_data": self.training_data
         })
         return base_dict
 
@@ -283,7 +288,8 @@ Example voice prompt format:
             raise
 
     def _store_analysis_response(self, content: str, status: str = "success", metadata: Dict = None, 
-                               structured_data: Dict = None, voice_prompt: str = None) -> None:
+                               structured_data: Dict = None, voice_prompt: str = None, 
+                               training_data: List[Dict] = None) -> None:
         """Store analysis response in Supabase"""
         try:
             # Get video_id and collection_id from session
@@ -323,6 +329,16 @@ Example voice prompt format:
                         content=voice_prompt
                     )
                     logger.info("Stored voice prompt in Supabase")
+                
+                # Store training data
+                if training_data:
+                    self.vector_store.store_generated_output(
+                        video_id=video_id,
+                        collection_id=collection_id,
+                        output_type="training_data",
+                        content=json.dumps(training_data)
+                    )
+                    logger.info("Stored training data in Supabase")
                 
             except Exception as e:
                 logger.error(f"Error storing outputs in Supabase: {str(e)}")
@@ -426,6 +442,100 @@ Example voice prompt format:
         processed_transcript = "\n\n".join(relevant_chunks)
         return processed_transcript
 
+    def _get_training_data_prompt(self, transcript: str) -> str:
+        """Generate prompt for training data extraction"""
+        return f"""You are an expert at extracting training data from transcripts to create high-quality examples for fine-tuning language models. Your task is to process a given transcript and structure the output in a format conducive to fine-tuning an LLM.
+
+Here is the transcript you will be working with:
+
+<transcript>
+{transcript}
+</transcript>
+
+To extract training data, you will create examples in the following format:
+
+<example>
+<input>
+[Insert a relevant portion of the transcript here, phrased as a prompt or question]
+</input>
+<output>
+[Insert an appropriate response or completion based on the transcript]
+</output>
+</example>
+
+Follow these steps to process the transcript:
+
+1. Read through the entire transcript carefully.
+2. Identify key topics, conversations, or information that would be valuable for training an LLM.
+3. Break down the transcript into smaller, coherent segments that can be used as individual training examples.
+4. For each segment, create an input-output pair:
+   - The input should be a prompt or question based on the content.
+   - The output should be the relevant information or response from the transcript.
+
+Guidelines for creating high-quality training examples:
+
+- Ensure each input-output pair is self-contained and makes sense on its own.
+- Vary the types of inputs (e.g., questions, prompts, incomplete sentences) to create diverse training data.
+- Include a mix of factual information, dialogue, and descriptive content when possible.
+- Avoid including sensitive or personal information in the examples.
+- Create examples that showcase different aspects of language understanding and generation.
+- Focus on extracting examples that demonstrate successful sales techniques and communication patterns.
+- Include examples of effective objection handling and closing techniques.
+
+Output your extracted training data as a series of examples, each enclosed in <example> tags, with <input> and <output> subtags. Aim to create at least 5 examples, but no more than 10, depending on the length and complexity of the transcript."""
+
+    def _parse_training_examples(self, response: str) -> List[Dict]:
+        """Parse training examples from LLM response"""
+        examples = []
+        
+        # Extract examples using regex
+        pattern = r'<example>\s*<input>(.*?)</input>\s*<output>(.*?)</output>\s*</example>'
+        matches = re.finditer(pattern, response, re.DOTALL)
+        
+        for match in matches:
+            input_text = match.group(1).strip()
+            output_text = match.group(2).strip()
+            examples.append({
+                "input": input_text,
+                "output": output_text
+            })
+        
+        return examples
+
+    def _extract_training_data(self, transcript: str) -> List[Dict]:
+        """Extract training examples from transcript"""
+        try:
+            # Get prompt
+            prompt = self._get_training_data_prompt(transcript)
+            
+            # Get LLM response using OpenAI chat completion
+            messages = [
+                {"role": "system", "content": "You are an expert at extracting training data from transcripts."},
+                {"role": "user", "content": prompt}
+            ]
+            
+            # Use the OpenAI client correctly
+            response = self.llm.client.chat.completions.create(
+                model="gpt-4-1106-preview",
+                messages=messages,
+                temperature=0.7,
+                max_tokens=2000
+            )
+            
+            # Get the response content
+            response_text = response.choices[0].message.content
+            
+            # Parse examples
+            examples = self._parse_training_examples(response_text)
+            
+            if not examples:
+                logger.warning("No training examples were extracted from the transcript")
+            
+            return examples
+        except Exception as e:
+            logger.error(f"Error extracting training data: {str(e)}", exc_info=True)
+            return []
+
     def _analyze_content(self, transcript: str) -> dict:
         """Analyze content using the consolidated SalesAnalysisTool"""
         try:
@@ -436,7 +546,10 @@ Example voice prompt format:
             if not result:
                 logger.error("Failed to analyze conversation")
                 return None
-                
+            
+            # Extract training data
+            training_data = self._extract_training_data(transcript)
+            
             # Format the result for response
             analysis = "## Analysis\n```markdown\n"
             analysis += result.raw_analysis
@@ -451,11 +564,17 @@ Example voice prompt format:
             analysis += "\n\n## Voice Prompt\n```\n"
             analysis += result.voice_prompt
             analysis += "\n```\n"
+            
+            # Add training data section
+            analysis += "\n\n## Training Data\n```json\n"
+            analysis += json.dumps(training_data, indent=2)
+            analysis += "\n```\n"
                 
             return {
                 "analysis": analysis,
                 "structured_data": result.structured_data,
-                "voice_prompt": result.voice_prompt
+                "voice_prompt": result.voice_prompt,
+                "training_data": training_data
             }
                 
         except Exception as e:
@@ -1449,13 +1568,15 @@ VOICE PROMPT:
             self._store_analysis_response(
                 content=analysis_result["analysis"],
                 structured_data=analysis_result["structured_data"],
-                voice_prompt=analysis_result["voice_prompt"]
+                voice_prompt=analysis_result["voice_prompt"],
+                training_data=analysis_result["training_data"]
             )
             
             # Update text content for frontend
             text_content.text = analysis_result["analysis"]
             text_content.structured_data = analysis_result["structured_data"]
             text_content.voice_prompt = analysis_result["voice_prompt"]
+            text_content.training_data = analysis_result["training_data"]
             text_content.status = MsgStatus.success
             text_content.status_message = "Analysis completed successfully"
             
