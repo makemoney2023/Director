@@ -232,24 +232,58 @@ class BlandAI_Agent(BaseAgent):
                         message=f"Analysis data not found for ID {analysis_id}"
                     )
                 
-                # Transform analysis data to pathway format
-                nodes, edges = self.transformer.transform_to_pathway(analysis_data)
-                
                 try:
+                    # Create knowledge base
+                    kb_name = f"Sales Analysis KB - {analysis_id}"
+                    kb_result = self.bland_ai_service.create_knowledge_base(
+                        name=kb_name,
+                        description=analysis_data["knowledge_base"]["summary"],
+                        content=analysis_data["knowledge_base"]
+                    )
+                    
+                    # Store voice prompts
+                    prompt_results = []
+                    for idx, prompt in enumerate(analysis_data["voice_prompts"]):
+                        prompt_name = f"Voice Prompt {idx+1} - Analysis {analysis_id}"
+                        result = self.bland_ai_service.store_prompt(
+                            prompt=prompt,
+                            name=prompt_name
+                        )
+                        prompt_results.append(result)
+                    
+                    # Transform analysis data to pathway format with KB and prompts
+                    nodes, edges = self.transformer.transform_to_pathway(
+                        analysis_data,
+                        kb_id=kb_result.get("kb_id"),
+                        prompt_ids=[p.get("id") for p in prompt_results if p.get("id")]
+                    )
+                    
                     # Update the pathway
                     result = self.bland_ai_service.update_pathway(
                         pathway_id=pathway_id,
                         nodes=nodes,
                         edges=edges
                     )
+                    
                     text_content.status = MsgStatus.success
                     text_content.status_message = f"Updated pathway successfully"
-                    text_content.text = f"Updated pathway (ID: {pathway_id}) with analysis data (ID: {analysis_id})"
+                    text_content.text = (
+                        f"Updated pathway (ID: {pathway_id}) with:\n"
+                        f"- Analysis ID: {analysis_id}\n"
+                        f"- Knowledge Base: {kb_name}\n"
+                        f"- Voice Prompts: {len(prompt_results)} created\n"
+                        f"- Nodes: {len(nodes)} configured\n"
+                        f"- Edges: {len(edges)} configured"
+                    )
                     self.output_message.publish()
                     return AgentResponse(
                         status=AgentStatus.SUCCESS,
                         message=f"Updated pathway successfully",
-                        data=result
+                        data={
+                            "pathway": result,
+                            "knowledge_base": kb_result,
+                            "prompts": prompt_results
+                        }
                     )
                 except Exception as e:
                     text_content.status = MsgStatus.error
@@ -347,15 +381,18 @@ class BlandAI_Agent(BaseAgent):
                 
             # Extract the relevant data
             return {
-                "sales_techniques": analysis.get("sales_techniques", []),
-                "objection_handling": analysis.get("objection_handling", []),
+                "knowledge_base": {
+                    "sales_techniques": analysis.get("sales_techniques", []),
+                    "objection_handling": analysis.get("objection_handling", []),
+                    "training_pairs": analysis.get("training_pairs", []),
+                    "summary": analysis.get("summary", "")
+                },
                 "voice_prompts": analysis.get("voice_prompts", []),
-                "training_pairs": analysis.get("training_pairs", []),
-                "summary": analysis.get("summary", ""),
-                "analysis_id": analysis_id,
-                "timestamp": datetime.now().isoformat(),
-                "meta_data": analysis.get("metadata", {}),  # Note: field name is 'metadata' in DB
-                "structured_data": analysis.get("structured_data", {})
+                "metadata": {
+                    "analysis_id": analysis_id,
+                    "timestamp": datetime.now().isoformat(),
+                    "source": "sales_prompt_extractor"
+                }
             }
             
         except Exception as e:

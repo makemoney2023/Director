@@ -3,7 +3,7 @@ Transformer for converting sales analysis data to Bland AI pathway format
 """
 
 import uuid
-from typing import Dict, List, Tuple, Any
+from typing import Dict, List, Tuple, Any, Optional
 from datetime import datetime
 
 class SalesPathwayTransformer:
@@ -23,46 +23,113 @@ class SalesPathwayTransformer:
         self.edge_counter += 1
         return f"edge_{self.edge_counter}_{int(datetime.now().timestamp())}"
         
-    def transform_to_pathway(self, sales_analysis: Dict[str, Any]) -> Tuple[Dict, Dict]:
-        """
-        Transform sales analysis data into Bland AI pathway format
-        Returns tuple of (nodes, edges)
+    def transform_to_pathway(self, analysis_data: Dict, kb_id: Optional[str] = None, prompt_ids: Optional[List[str]] = None) -> Tuple[Dict[str, Dict], Dict[str, Dict]]:
+        """Transform sales analysis data into pathway nodes and edges
+        
+        Args:
+            analysis_data: Analysis data from sales prompt extractor
+            kb_id: Optional knowledge base ID to link to nodes
+            prompt_ids: Optional list of prompt IDs to use for nodes
+            
+        Returns:
+            Tuple of (nodes dict, edges dict)
         """
         nodes = {}
         edges = {}
         
-        # Create start node with voice prompt
-        start_node_id = self._generate_node_id()
-        voice_prompts = sales_analysis.get("voice_prompts", [])
-        greeting_text = voice_prompts[0] if voice_prompts else "Hello, this is an AI assistant calling. How are you today?"
-        
-        nodes[start_node_id] = {
-            "name": "Greeting",
-            "isStart": True,
+        # Create start node
+        nodes["start"] = {
+            "id": "start",
             "type": "Default",
-            "text": greeting_text,
-            "prompt": "Use a friendly, professional tone to greet the customer",
-            "dialogueExamples": self._get_greeting_examples(sales_analysis),
-            "modelOptions": {
-                "interruptionThreshold": 0.7,
-                "temperature": 0.7
+            "data": {
+                "name": "Start",
+                "isStart": True
             }
         }
         
-        # Transform sales techniques into nodes with voice prompts
-        technique_nodes = self._transform_techniques(sales_analysis)
-        nodes.update(technique_nodes)
+        # Add greeting prompt if available
+        if prompt_ids and len(prompt_ids) > 0:
+            nodes["start"]["data"]["prompt_id"] = prompt_ids[0]
         
-        # Transform objection handling into nodes with voice prompts
-        objection_nodes = self._transform_objection_handlers(sales_analysis)
-        nodes.update(objection_nodes)
+        # Create knowledge base nodes for sales techniques
+        for idx, technique in enumerate(analysis_data.get("knowledge_base", {}).get("sales_techniques", [])):
+            node_id = f"technique_{idx}"
+            nodes[node_id] = {
+                "id": node_id,
+                "type": "Knowledge Base",
+                "data": {
+                    "name": technique.get("name", "Sales Technique"),
+                    "kb_id": kb_id,
+                    "kb_section": "sales_techniques",
+                    "kb_item_index": idx
+                }
+            }
+            
+            # Link to previous node
+            prev_id = "start" if idx == 0 else f"technique_{idx-1}"
+            edge_id = f"{prev_id}_to_{node_id}"
+            edges[edge_id] = {
+                "id": edge_id,
+                "source": prev_id,
+                "target": node_id,
+                "data": {
+                    "name": "Next Technique"
+                }
+            }
         
-        # Create edges connecting the nodes
-        edges.update(self._create_node_connections(
-            start_node_id,
-            technique_nodes,
-            objection_nodes
-        ))
+        # Create objection handling nodes
+        objection_start_idx = len(nodes) - 1  # Start after technique nodes
+        for idx, objection in enumerate(analysis_data.get("knowledge_base", {}).get("objection_handling", [])):
+            node_id = f"objection_{idx}"
+            nodes[node_id] = {
+                "id": node_id,
+                "type": "Knowledge Base",
+                "data": {
+                    "name": f"Handle {objection.get('objection', 'Objection')}",
+                    "kb_id": kb_id,
+                    "kb_section": "objection_handling",
+                    "kb_item_index": idx
+                }
+            }
+            
+            # Link from each technique node to this objection handler
+            for tech_idx in range(len(analysis_data.get("knowledge_base", {}).get("sales_techniques", []))):
+                tech_id = f"technique_{tech_idx}"
+                edge_id = f"{tech_id}_to_{node_id}"
+                edges[edge_id] = {
+                    "id": edge_id,
+                    "source": tech_id,
+                    "target": node_id,
+                    "data": {
+                        "name": "Handle Objection"
+                    }
+                }
+        
+        # Create end node
+        nodes["end"] = {
+            "id": "end",
+            "type": "End Call",
+            "data": {
+                "name": "End Call"
+            }
+        }
+        
+        # Add closing prompt if available
+        if prompt_ids and len(prompt_ids) > 1:
+            nodes["end"]["data"]["prompt_id"] = prompt_ids[-1]
+        
+        # Link all nodes to end
+        for node_id in nodes.keys():
+            if node_id != "end":
+                edge_id = f"{node_id}_to_end"
+                edges[edge_id] = {
+                    "id": edge_id,
+                    "source": node_id,
+                    "target": "end",
+                    "data": {
+                        "name": "End Call"
+                    }
+                }
         
         return nodes, edges
         

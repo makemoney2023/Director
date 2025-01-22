@@ -222,3 +222,61 @@ class BlandAIService:
             return response.json()
         else:
             self._handle_error_response(response) 
+
+    def create_knowledge_base(self, name: str, description: str, content: Dict) -> Dict:
+        """Create a new knowledge base with content from sales analysis
+        
+        Args:
+            name: Name of the knowledge base
+            description: Description of the knowledge base
+            content: Dictionary containing sales techniques, objection handling, etc.
+            
+        Returns:
+            Response from Bland AI API containing knowledge base ID
+        """
+        try:
+            url = f"{self.base_api_url}/knowledge"
+            
+            # Format content for knowledge base
+            formatted_content = {
+                "sales_techniques": [
+                    {
+                        "title": technique.get("name", ""),
+                        "description": technique.get("description", ""),
+                        "examples": technique.get("examples", []),
+                        "effectiveness": technique.get("effectiveness", "")
+                    }
+                    for technique in content.get("sales_techniques", [])
+                ],
+                "objection_handling": [
+                    {
+                        "objection": obj.get("objection", ""),
+                        "response": obj.get("response", ""),
+                        "examples": obj.get("examples", [])
+                    }
+                    for obj in content.get("objection_handling", [])
+                ],
+                "training_examples": content.get("training_pairs", []),
+                "summary": content.get("summary", "")
+            }
+            
+            payload = {
+                "name": name,
+                "description": description,
+                "content": formatted_content,
+                "type": "sales_analysis"
+            }
+            
+            response = requests.post(
+                url,
+                headers=self.headers,
+                json=payload
+            )
+            
+            if response.status_code == 200:
+                return response.json()
+            else:
+                self._handle_error_response(response)
+                
+        except Exception as e:
+            raise DirectorException(f"Failed to create knowledge base: {str(e)}") 

@@ -110,57 +110,235 @@ onUnmounted(() => {
 </template>
 
 <style>
+/* Base theme variables */
 :root {
-  --popper-theme-background-color: #333333;
-  --popper-theme-background-color-hover: #333333;
-  --popper-theme-text-color: #ffffff;
-  --popper-theme-border-width: 0px;
-  --popper-theme-border-style: solid;
-  --popper-theme-border-radius: 8px;
-  --popper-theme-padding: 4px 8px;
-  --popper-theme-box-shadow: 0px 6px 6px rgba(0, 0, 0, 0.08);
+  --vdb-primary: #9c27b0;
+  --vdb-primary-dark: #7b1fa2;
+  --vdb-bg-dark: #121212;
+  --vdb-card-bg: #1e1e1e;
+  --vdb-border: #2d2d2d;
+  --vdb-text: #ffffff;
+  --vdb-highlight-bg: #2a2a2a;
 }
 
-/* Hide the default VideoDB logo */
-:deep(.chat-interface__logo) {
-  display: none !important;
+/* Global text color */
+*, *::before, *::after {
+  color: var(--vdb-text) !important;
 }
 
-.template {
-  height: 100vh;
-  width: 100vw;
+/* Selection styles */
+::selection {
+  background-color: var(--vdb-primary) !important;
+  color: var(--vdb-text) !important;
 }
 
-main {
-  overflow: scroll;
-  height: 100%;
-}
-html {
-  overflow: hidden;
+::-moz-selection {
+  background-color: var(--vdb-primary) !important;
+  color: var(--vdb-text) !important;
 }
 
-/* For WebKit-based browsers (Chrome, Safari) */
+/* Title styles - now white instead of gradient */
+.collection-title,
+div[title="VideoDB Default Collection"],
+[class*="vdb-c-line-clamp"] {
+  color: var(--vdb-text) !important;
+  -webkit-text-fill-color: var(--vdb-text) !important;
+  background-image: none !important;
+}
+
+/* Global background */
+body, html, main, .chat-interface {
+  background-color: var(--vdb-bg-dark) !important;
+}
+
+/* Primary color overrides with high specificity */
+.vdb-c-text-orange,
+div.vdb-c-text-orange,
+span.vdb-c-text-orange {
+  color: var(--vdb-primary) !important;
+}
+
+.vdb-c-bg-orange,
+div.vdb-c-bg-orange,
+button.vdb-c-bg-orange {
+  background-color: var(--vdb-primary) !important;
+}
+
+.vdb-c-border-orange,
+div.vdb-c-border-orange {
+  border-color: var(--vdb-primary) !important;
+}
+
+/* Hover states */
+.vdb-c-hover\:bg-orange:hover,
+div.vdb-c-hover\:bg-orange:hover,
+button.vdb-c-hover\:bg-orange:hover {
+  background-color: var(--vdb-primary-dark) !important;
+}
+
+.vdb-c-hover\:text-orange:hover,
+div.vdb-c-hover\:text-orange:hover {
+  color: var(--vdb-primary) !important;
+}
+
+/* Icons */
+.query-card-icon path,
+svg path.vdb-c-fill-orange {
+  fill: var(--vdb-primary) !important;
+}
+
+/* Card styles with high specificity */
+.chat-card,
+.query-card,
+div.chat-card,
+div.query-card,
+:deep(.chat-card),
+:deep(.query-card),
+.vdb-c-bg-white {
+  background-color: var(--vdb-card-bg) !important;
+  border: 1px solid var(--vdb-border) !important;
+}
+
+/* Card text color override */
+.chat-card *,
+.query-card *,
+div.chat-card *,
+div.query-card *,
+:deep(.chat-card) *,
+:deep(.query-card) *,
+.vdb-c-bg-white * {
+  color: var(--vdb-text) !important;
+}
+
+/* Selected text in cards */
+.chat-card ::selection,
+.query-card ::selection,
+div.chat-card ::selection,
+div.query-card ::selection {
+  background-color: var(--vdb-primary) !important;
+  color: var(--vdb-text) !important;
+}
+
+/* Button styles */
+.vdb-c-btn,
+button.vdb-c-btn,
+:deep(.vdb-c-btn) {
+  background-color: var(--vdb-primary) !important;
+  color: var(--vdb-text) !important;
+}
+
+.vdb-c-btn:hover,
+button.vdb-c-btn:hover,
+:deep(.vdb-c-btn:hover) {
+  background-color: var(--vdb-primary-dark) !important;
+}
+
+/* Light variants */
+.vdb-c-bg-orange-light,
+div.vdb-c-bg-orange-light {
+  background-color: rgba(156, 39, 176, 0.1) !important;
+}
+
+/* Dark variants */
+.vdb-c-bg-orange-dark,
+div.vdb-c-bg-orange-dark {
+  background-color: var(--vdb-primary-dark) !important;
+}
+
+/* Interface elements */
+:deep(.chat-interface),
+:deep(.sidebar),
+:deep(.chat-messages),
+:deep(.main-content),
+.chat-interface,
+.sidebar,
+.chat-messages,
+.main-content {
+  background-color: var(--vdb-bg-dark) !important;
+}
+
+/* Message styling */
+:deep(.message),
+.message {
+  background-color: var(--vdb-card-bg) !important;
+  border-color: var(--vdb-border) !important;
+}
+
+/* Input fields */
+:deep(input),
+:deep(textarea),
+input,
+textarea,
+.vdb-c-bg-gray-50 {
+  background-color: var(--vdb-card-bg) !important;
+  border-color: var(--vdb-border) !important;
+}
+
+/* Collection items */
+:deep(.collection-item),
+:deep(.chat-item),
+.collection-item,
+.chat-item {
+  background-color: var(--vdb-card-bg) !important;
+  border-color: var(--vdb-border) !important;
+}
+
+:deep(.collection-item:hover),
+:deep(.chat-item:hover),
+.collection-item:hover,
+.chat-item:hover {
+  background-color: var(--vdb-highlight-bg) !important;
+}
+
+/* Upload button */
+:deep(.upload-btn),
+.upload-btn,
+button.upload-btn {
+  background-color: var(--vdb-primary) !important;
+  color: var(--vdb-text) !important;
+}
+
+:deep(.upload-btn:hover),
+.upload-btn:hover,
+button.upload-btn:hover {
+  background-color: var(--vdb-primary-dark) !important;
+}
+
+/* Scrollbar styling */
 ::-webkit-scrollbar {
-  width: 12px; /* Width of the scrollbar */
+  width: 12px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #f1f1f1; /* Background of the scrollbar track */
+  background: var(--vdb-card-bg);
 }
 
 ::-webkit-scrollbar-thumb {
-  background-color: #888; /* Scrollbar thumb color */
-  border-radius: 6px; /* Rounded corners */
-  border: 3px solid #f1f1f1; /* Space around the thumb */
+  background-color: #424242;
+  border-radius: 6px;
+  border: 3px solid var(--vdb-card-bg);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background-color: #555; /* Thumb color on hover */
+  background-color: #616161;
 }
 
-/* For Mozilla Firefox */
 * {
-  scrollbar-width: thin; /* Makes the scrollbar narrower */
-  scrollbar-color: #888 #f1f1f1; /* Thumb and track colors */
+  scrollbar-width: thin;
+  scrollbar-color: #424242 var(--vdb-card-bg);
+}
+
+/* Additional overrides for light backgrounds */
+.vdb-c-bg-gray-50,
+.vdb-c-bg-white,
+div.vdb-c-bg-gray-50,
+div.vdb-c-bg-white {
+  background-color: var(--vdb-card-bg) !important;
+}
+
+/* Force white text on all elements */
+:deep(*),
+* {
+  color: var(--vdb-text) !important;
 }
 </style>
