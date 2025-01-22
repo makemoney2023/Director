@@ -3,6 +3,8 @@ import { ref, onMounted, onUnmounted } from "vue";
 import { ChatInterface } from "@videodb/chat-vue";
 import "@videodb/chat-vue/dist/style.css";
 import { videoService, analysisService } from "../services/api";
+import Logo from "../components/Logo.vue";
+import SidebarIcon from "../components/SidebarIcon.vue";
 
 const BACKEND_URL = import.meta.env.VITE_APP_BACKEND_URL;
 const chatInterfaceRef = ref(null);
@@ -89,6 +91,20 @@ onUnmounted(() => {
           onAnalysisResponse: handleAnalysisResponse
         }
       }"
+      :logo-component="Logo"
+      :sidebar-config="{
+        icon: SidebarIcon,
+        links: [
+          {
+            href: 'https://docs.director.videodb.io/',
+            text: 'Documentation'
+          },
+          {
+            href: 'https://discord.com/invite/py9P639jGz',
+            text: 'Support'
+          }
+        ]
+      }"
     />
   </main>
 </template>
@@ -103,6 +119,11 @@ onUnmounted(() => {
   --popper-theme-border-radius: 8px;
   --popper-theme-padding: 4px 8px;
   --popper-theme-box-shadow: 0px 6px 6px rgba(0, 0, 0, 0.08);
+}
+
+/* Hide the default VideoDB logo */
+:deep(.chat-interface__logo) {
+  display: none !important;
 }
 
 .template {

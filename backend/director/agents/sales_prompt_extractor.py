@@ -10,6 +10,7 @@ import time
 import os
 from sqlalchemy.orm import Session as SQLAlchemySession
 from contextlib import contextmanager
+import yaml
 
 from director.agents.base import BaseAgent, AgentResponse, AgentStatus
 from director.agents.transcription import TranscriptionAgent
@@ -289,7 +290,7 @@ Example voice prompt format:
 
     def _store_analysis_response(self, content: str, status: str = "success", metadata: Dict = None, 
                                structured_data: Dict = None, voice_prompt: str = None, 
-                               training_data: List[Dict] = None) -> None:
+                               training_data: List[Dict] = None, few_shot_examples: List[Dict] = None) -> None:
         """Store analysis response in Supabase"""
         try:
             # Get video_id and collection_id from session
@@ -320,15 +321,19 @@ Example voice prompt format:
                     )
                     logger.info("Stored structured data in Supabase")
                 
-                # Store voice prompt
+                # Store voice prompt with few-shot examples
                 if voice_prompt:
+                    prompt_with_examples = {
+                        "prompt": voice_prompt,
+                        "few_shot_examples": few_shot_examples
+                    }
                     self.vector_store.store_generated_output(
                         video_id=video_id,
                         collection_id=collection_id,
                         output_type="voice_prompt",
-                        content=voice_prompt
+                        content=json.dumps(prompt_with_examples)
                     )
-                    logger.info("Stored voice prompt in Supabase")
+                    logger.info("Stored voice prompt with few-shot examples in Supabase")
                 
                 # Store training data
                 if training_data:
@@ -536,6 +541,90 @@ Output your extracted training data as a series of examples, each enclosed in <e
             logger.error(f"Error extracting training data: {str(e)}", exc_info=True)
             return []
 
+    def _generate_few_shot_examples(self, transcript: str) -> List[Dict]:
+        """Generate few-shot learning examples from transcript"""
+        try:
+            prompt = f"""You are an expert at identifying and extracting few-shot learning examples from sales conversations. 
+Your task is to analyze this transcript and create examples that can help an AI understand effective sales techniques.
+
+Here is the transcript:
+
+<transcript>
+{transcript}
+</transcript>
+
+For each key moment in the conversation, create a few-shot example in this format:
+
+<example>
+<context>
+[Describe the specific sales situation or customer state]
+</context>
+<input>
+[What the customer said or the situation presented]
+</input>
+<response>
+[How the salesperson effectively responded]
+</response>
+<reasoning>
+[Why this response was effective and what technique it demonstrates]
+</reasoning>
+</example>
+
+Focus on examples that demonstrate:
+1. Objection handling
+2. Value proposition delivery
+3. Rapport building
+4. Closing techniques
+5. Discovery questions
+6. Problem-solution framing
+
+Create 5-8 diverse examples that cover different sales techniques and situations."""
+
+            # Get LLM response using OpenAI chat completion
+            messages = [
+                {"role": "system", "content": "You are an expert at extracting sales conversation examples."},
+                {"role": "user", "content": prompt}
+            ]
+            
+            response = self.llm.client.chat.completions.create(
+                model="gpt-4-1106-preview",
+                messages=messages,
+                temperature=0.7,
+                max_tokens=2000
+            )
+            
+            # Get the response content
+            response_text = response.choices[0].message.content
+            
+            # Parse examples
+            examples = self._parse_few_shot_examples(response_text)
+            
+            if not examples:
+                logger.warning("No few-shot examples were extracted from the transcript")
+            
+            return examples
+        except Exception as e:
+            logger.error(f"Error generating few-shot examples: {str(e)}", exc_info=True)
+            return []
+
+    def _parse_few_shot_examples(self, response: str) -> List[Dict]:
+        """Parse few-shot examples from LLM response"""
+        examples = []
+        
+        # Extract examples using regex
+        pattern = r'<example>\s*<context>(.*?)</context>\s*<input>(.*?)</input>\s*<response>(.*?)</response>\s*<reasoning>(.*?)</reasoning>\s*</example>'
+        matches = re.finditer(pattern, response, re.DOTALL)
+        
+        for match in matches:
+            examples.append({
+                "context": match.group(1).strip(),
+                "input": match.group(2).strip(),
+                "response": match.group(3).strip(),
+                "reasoning": match.group(4).strip()
+            })
+        
+        return examples
+
     def _analyze_content(self, transcript: str) -> dict:
         """Analyze content using the consolidated SalesAnalysisTool"""
         try:
@@ -550,6 +639,9 @@ Output your extracted training data as a series of examples, each enclosed in <e
             # Extract training data
             training_data = self._extract_training_data(transcript)
             
+            # Generate few-shot examples
+            few_shot_examples = self._generate_few_shot_examples(transcript)
+            
             # Format the result for response
             analysis = "## Analysis\n```markdown\n"
             analysis += result.raw_analysis
@@ -560,9 +652,11 @@ Output your extracted training data as a series of examples, each enclosed in <e
             analysis += json.dumps(result.structured_data, indent=2)
             analysis += "\n```\n"
 
-            # Add voice prompt section
+            # Add voice prompt section with few-shot examples
             analysis += "\n\n## Voice Prompt\n```\n"
             analysis += result.voice_prompt
+            analysis += "\n\n### Few-Shot Learning Examples:\n"
+            analysis += yaml.dump({"few_shot_examples": few_shot_examples}, default_flow_style=False, sort_keys=False)
             analysis += "\n```\n"
             
             # Add training data section
@@ -574,7 +668,8 @@ Output your extracted training data as a series of examples, each enclosed in <e
                 "analysis": analysis,
                 "structured_data": result.structured_data,
                 "voice_prompt": result.voice_prompt,
-                "training_data": training_data
+                "training_data": training_data,
+                "few_shot_examples": few_shot_examples
             }
                 
         except Exception as e:
@@ -1569,7 +1664,8 @@ VOICE PROMPT:
                 content=analysis_result["analysis"],
                 structured_data=analysis_result["structured_data"],
                 voice_prompt=analysis_result["voice_prompt"],
-                training_data=analysis_result["training_data"]
+                training_data=analysis_result["training_data"],
+                few_shot_examples=analysis_result["few_shot_examples"]
             )
             
             # Update text content for frontend
