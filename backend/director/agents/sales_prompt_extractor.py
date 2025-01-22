@@ -438,7 +438,9 @@ Example voice prompt format:
                 return None
                 
             # Format the result for response
-            analysis = result.raw_analysis
+            analysis = "## Analysis\n```markdown\n"
+            analysis += result.raw_analysis
+            analysis += "\n```"
 
             # Add structured data section
             analysis += "\n\n## Structured Data\n```json\n"

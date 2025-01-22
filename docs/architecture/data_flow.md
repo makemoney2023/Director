@@ -260,3 +260,51 @@ The Edge Functions integration follows a synchronous request-response pattern:
    - Failed operations tracked in metadata
    - Automatic retry for transient failures
    - User-friendly error messages in UI 
+
+## Sales Analysis Flow
+
+### Components
+1. **SalesPromptExtractorAgent**
+   - Entry point for sales analysis requests
+   - Manages session state and video transcription
+   - Coordinates with SalesAnalysisTool
+
+2. **SalesAnalysisTool**
+   - Core analysis engine
+   - Generates three outputs:
+     - Raw analysis (markdown)
+     - Structured data (JSON)
+     - Voice prompt (text)
+
+### Data Flow
+1. User initiates analysis with `@sales_prompt_extractor`
+2. Agent validates video_id and collection_id
+3. Video is transcribed if needed
+4. Transcript is processed by SalesAnalysisTool
+5. Results are stored in:
+   - Supabase vector store
+   - Local SQLite database
+   - Generated outputs table
+6. Formatted results are returned via socket.io
+
+### Output Format
+The system returns a unified response containing:
+```markdown
+## Analysis
+```markdown
+[Detailed analysis text]
+```
+
+## Structured Data
+```json
+{
+  "analysis_data": {...}
+}
+```
+
+## Voice Prompt
+```
+[Voice agent instructions]
+```
+
+This format ensures consistent display and easy parsing of results. 
