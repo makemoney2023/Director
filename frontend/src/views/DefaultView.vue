@@ -341,4 +341,60 @@ div.vdb-c-bg-white {
 * {
   color: var(--vdb-text) !important;
 }
+
+/* Logo size */
+:deep(.logo-component),
+:deep(.logo-component svg) {
+  transform: scale(1.3) !important;
+}
+
+/* Card text color override with high specificity */
+.video-card,
+.video-card *,
+div.video-card,
+div.video-card *,
+:deep(.video-card),
+:deep(.video-card *),
+.vdb-c-text-kilvish-900,
+.vdb-c-text-xs,
+.vdb-c-font-medium,
+.text-elip,
+.vdb-c-line-clamp-2 {
+  color: var(--vdb-text) !important;
+  -webkit-text-fill-color: var(--vdb-text) !important;
+}
+
+/* Specific override for video titles */
+.video-card .text-elip,
+.video-card .vdb-c-line-clamp-2,
+.video-card .vdb-c-text-xs {
+  color: var(--vdb-text) !important;
+  -webkit-text-fill-color: var(--vdb-text) !important;
+  opacity: 0.9;
+}
+
+/* Video card specific styles with high specificity */
+.video-card,
+.video-card .video-card-content,
+.video-card .video-card-content *,
+.video-card .video-title,
+.video-card .video-description,
+.video-card .video-metadata,
+.video-card .text-elip,
+.video-card .vdb-c-line-clamp-2 {
+  color: rgba(255, 255, 255, 0.95) !important;
+  -webkit-text-fill-color: rgba(255, 255, 255, 0.95) !important;
+  text-shadow: 0 0 1px rgba(0, 0, 0, 0.2);
+}
+
+/* Additional styles for better contrast */
+.video-card {
+  background: rgba(26, 26, 26, 0.95) !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+}
+
+.video-card:hover {
+  background: rgba(42, 42, 42, 0.95) !important;
+  border-color: rgba(255, 255, 255, 0.2) !important;
+}
 </style>

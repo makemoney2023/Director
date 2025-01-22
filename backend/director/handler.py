@@ -5,23 +5,23 @@ from datetime import datetime
 from director.agents.thumbnail import ThumbnailAgent
 from director.agents.summarize_video import SummarizeVideoAgent
 from director.agents.download import DownloadAgent
-from director.agents.pricing import PricingAgent
+# from director.agents.pricing import PricingAgent
 from director.agents.upload import UploadAgent
 from director.agents.search import SearchAgent
 from director.agents.prompt_clip import PromptClipAgent
 from director.agents.index import IndexAgent
 from director.agents.brandkit import BrandkitAgent
-from director.agents.profanity_remover import ProfanityRemoverAgent
-from director.agents.image_generation import ImageGenerationAgent
+# from director.agents.profanity_remover import ProfanityRemoverAgent
+# from director.agents.image_generation import ImageGenerationAgent
 from director.agents.audio_generation import AudioGenerationAgent
-from director.agents.video_generation import VideoGenerationAgent
+# from director.agents.video_generation import VideoGenerationAgent
 from director.agents.stream_video import StreamVideoAgent
 from director.agents.subtitle import SubtitleAgent
 from director.agents.slack_agent import SlackAgent
 from director.agents.editing import EditingAgent
 from director.agents.dubbing import DubbingAgent
-from director.agents.text_to_movie import TextToMovieAgent
-from director.agents.meme_maker import MemeMakerAgent
+# from director.agents.text_to_movie import TextToMovieAgent
+# from director.agents.meme_maker import MemeMakerAgent
 from director.agents.composio import ComposioAgent
 from director.agents.transcription import TranscriptionAgent
 from director.agents.comparison import ComparisonAgent
@@ -49,24 +49,24 @@ class ChatHandler:
             ThumbnailAgent,
             SummarizeVideoAgent,
             DownloadAgent,
-            PricingAgent,
+            # PricingAgent,
             UploadAgent,
             SearchAgent,
             PromptClipAgent,
             IndexAgent,
             BrandkitAgent,
-            ProfanityRemoverAgent,
-            ImageGenerationAgent,
+            # ProfanityRemoverAgent,
+            # ImageGenerationAgent,
             AudioGenerationAgent,
-            VideoGenerationAgent,
+            # VideoGenerationAgent,
             StreamVideoAgent,
             SubtitleAgent,
             SlackAgent,
             EditingAgent,
             DubbingAgent,
             TranscriptionAgent,
-            TextToMovieAgent,
-            MemeMakerAgent,
+            # TextToMovieAgent,
+            # MemeMakerAgent,
             ComposioAgent,
             ComparisonAgent,
             WebSearchAgent,
