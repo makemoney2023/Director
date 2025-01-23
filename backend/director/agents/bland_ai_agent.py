@@ -6,7 +6,7 @@ from typing import Dict, Any, Optional, List
 from datetime import datetime
 import logging
 
-from director.core.session import Session, MsgStatus, TextContent
+from director.core.session import Session, MsgStatus, TextContent, OutputMessage, MsgType
 from director.agents.base import BaseAgent, AgentResponse, AgentStatus
 from director.integrations.bland_ai.handler import BlandAIIntegrationHandler
 from director.integrations.bland_ai.transformer import SalesPathwayTransformer
@@ -14,6 +14,7 @@ from director.core.config import Config
 from director.db import load_db
 from director.constants import DBType
 from director.integrations.bland_ai.service import BlandAIService
+from director.integrations.bland_ai.tools.knowledge_base import KnowledgeBaseTool
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,7 @@ class BlandAI_Agent(BaseAgent):
         self.config = Config()
         self.bland_ai_service = BlandAIService(self.config)
         self.transformer = SalesPathwayTransformer()
+        self.kb_tool = KnowledgeBaseTool(self.config)
         self.db = load_db(DBType.SQLITE)
         
     @property
@@ -41,16 +43,25 @@ class BlandAI_Agent(BaseAgent):
             "properties": {
                 "command": {
                     "type": "string",
-                    "enum": ["list", "stats", "create", "create_empty", "update", "preview"],
+                    "enum": [
+                        "list",
+                        "get",
+                        "create",
+                        "create_empty",
+                        "update",
+                        "preview",
+                        "add_kb",
+                        "remove_kb"
+                    ],
                     "description": "Command to execute"
                 },
                 "name": {
                     "type": "string",
-                    "description": "Name for the new pathway (required for create_empty)"
+                    "description": "Name for the pathway"
                 },
                 "description": {
                     "type": "string",
-                    "description": "Description for the new pathway (required for create_empty)"
+                    "description": "Description for the pathway"
                 },
                 "analysis_id": {
                     "type": "string",
@@ -58,284 +69,97 @@ class BlandAI_Agent(BaseAgent):
                 },
                 "pathway_id": {
                     "type": "string",
-                    "description": "ID of the pathway to update/get stats for"
+                    "description": "ID of the pathway to update/get"
+                },
+                "kb_id": {
+                    "type": "string",
+                    "description": "ID of the knowledge base to link/unlink"
                 }
             },
             "required": ["command"],
             "description": "Manages Bland AI conversation pathways"
         }
-        
-    def _get_latest_analysis_id(self) -> Optional[str]:
-        """Get the latest analysis ID from the current session"""
-        try:
-            # Get messages from the current conversation
-            messages = self.session.get_messages()
-            if not messages:
-                logger.info("No messages found in current session")
-                return None
-                
-            # Look for the most recent sales prompt extractor response
-            for msg in reversed(messages):
-                if msg.msg_type == "output":
-                    # Check each content item
-                    for content in msg.content:
-                        if content.get("agent_name") == "sales_prompt_extractor":
-                            # Try different ways the analysis ID might be stored
-                            analysis_data = content.get("analysis_data", {})
-                            analysis_id = (
-                                analysis_data.get("analysis_id") or  # Direct access
-                                content.get("analysis_id") or        # Top level
-                                content.get("result", {}).get("analysis_id")  # In result
-                            )
-                            if analysis_id:
-                                logger.info(f"Found latest analysis ID: {analysis_id}")
-                                return analysis_id
-                            
-                            # Log the content for debugging
-                            logger.info(f"Found sales_prompt_extractor content but no analysis_id: {content}")
-                            
-            logger.info("No analysis ID found in recent messages")
-            return None
-            
-        except Exception as e:
-            logger.error(f"Error getting latest analysis ID: {str(e)}", exc_info=True)
-            return None
-            
-    def _get_pathway_by_name(self, name: str) -> Optional[str]:
-        """Find pathway ID by name"""
-        try:
-            pathways = self.bland_ai_service.list_pathways()
-            for pathway in pathways:
-                if pathway.get("name", "").lower() == name.lower():
-                    return pathway.get("id")
-            return None
-        except Exception as e:
-            logger.error(f"Error finding pathway by name: {str(e)}")
-            return None
 
     def run(self, command: str, **kwargs) -> AgentResponse:
-        # If no command or just whitespace, return help message
-        if not command or command.isspace():
-            help_text = """Available commands:
-- create_empty name="Name" description="Description": Create a new empty pathway
-- update name="Name": Update pathway with latest analysis
-- list: List all available pathways
-- stats pathway_id=ID: Get statistics for a pathway"""
-            
-            text_content = TextContent(
-                agent_name="bland_ai",
-                status=MsgStatus.SUCCESS,
-                status_message="Help Information",
-                text=help_text
-            )
-            self.output_message.content.append(text_content)
-            self.output_message.publish()
-            return AgentResponse(status=MsgStatus.SUCCESS, message="Help information provided")
-
+        """Run the Bland AI agent"""
+        logger.info(f"BlandAI_Agent received command: {command}")
+        
+        # Create initial text content for output
+        text_content = TextContent(
+            agent_name=self.agent_name,
+            status=MsgStatus.progress,
+            status_message="Processing command...",
+            text="Processing your request..."
+        )
+        self.output_message.content = [text_content]
+        self.output_message.status = MsgStatus.progress
+        logger.info("Publishing initial progress message")
+        self.output_message.publish()
+        
         try:
-            # Create text content for output
-            text_content = TextContent(
-                agent_name=self.agent_name,
-                status=MsgStatus.progress,
-                status_message="Processing command..."
-            )
-            self.output_message.content.append(text_content)
-            self.output_message.publish()
-            
+            # If no command or just whitespace or just @bland_ai, return help message
+            if not command or command.isspace() or command.strip() == "@bland_ai":
+                logger.info("Sending help message")
+                help_text = """Welcome to the Bland AI Agent! Here are the available commands:
+
+- create_empty name="Name" description="Description": Create a new empty pathway
+- create name="Name" description="Description" analysis_id="ID": Create pathway from analysis
+- update pathway_id="ID" [name="Name"] [description="Description"]: Update pathway
+- get pathway_id="ID": Get pathway details
+- list: List all available pathways
+- add_kb pathway_id="ID" kb_id="ID": Add knowledge base to pathway
+- remove_kb pathway_id="ID" kb_id="ID": Remove knowledge base from pathway
+
+Example: @bland_ai list"""
+
+                text_content.status = MsgStatus.success
+                text_content.status_message = "Help Information"
+                text_content.text = help_text
+                
+                self.output_message.content = [text_content]
+                self.output_message.status = MsgStatus.success
+                logger.info("Publishing help message")
+                self.output_message.publish()
+                
+                return AgentResponse(
+                    status=AgentStatus.SUCCESS,
+                    message="Help information provided"
+                )
+
             # Get parameters from kwargs
             name = kwargs.get('name')
             description = kwargs.get('description')
             analysis_id = kwargs.get('analysis_id')
             pathway_id = kwargs.get('pathway_id')
+            kb_id = kwargs.get('kb_id')
             
-            if command == "create_empty":
-                if not name or not description:
-                    text_content.status = MsgStatus.error
-                    text_content.status_message = "Name and description are required for creating a pathway"
-                    self.output_message.publish()
-                    return AgentResponse(
-                        status=AgentStatus.ERROR,
-                        message="Name and description are required for creating a pathway"
-                    )
-                    
-                try:
-                    result = self.bland_ai_service.create_pathway(
-                        name=name,
-                        description=description
-                    )
-                    text_content.status = MsgStatus.success
-                    text_content.status_message = f"Created new pathway '{name}' successfully"
-                    text_content.text = f"Created new pathway:\nName: {name}\nDescription: {description}\nID: {result.get('pathway_id', 'Unknown')}"
-                    self.output_message.publish()
-                    return AgentResponse(
-                        status=AgentStatus.SUCCESS,
-                        message=f"Created new pathway '{name}' successfully",
-                        data=result
-                    )
-                except Exception as e:
-                    text_content.status = MsgStatus.error
-                    text_content.status_message = f"Failed to create pathway: {str(e)}"
-                    self.output_message.publish()
-                    return AgentResponse(
-                        status=AgentStatus.ERROR,
-                        message=f"Failed to create pathway: {str(e)}"
-                    )
-                
-            elif command == "update":
-                # If no analysis_id provided, try to get the latest one
-                if not analysis_id:
-                    analysis_id = self._get_latest_analysis_id()
-                    if not analysis_id:
-                        text_content.status = MsgStatus.error
-                        text_content.status_message = "No analysis found in current session"
-                        text_content.text = (
-                            "I couldn't find a recent analysis in this chat session. To update the pathway:\n\n"
-                            "1. First run the sales prompt extractor by selecting it from the sidebar\n"
-                            "2. Once the analysis is complete, run this command again:\n"
-                            "   @bland_ai update name=\"Mark Wilson Used Cars\""
-                        )
-                        self.output_message.publish()
-                        return AgentResponse(
-                            status=AgentStatus.ERROR,
-                            message="No analysis found in current session"
-                        )
-                
-                # If name is provided but no pathway_id, try to find the pathway by name
-                if name and not pathway_id:
-                    pathway_id = self._get_pathway_by_name(name)
-                    if not pathway_id:
-                        text_content.status = MsgStatus.error
-                        text_content.status_message = f"Could not find pathway with name '{name}'"
-                        self.output_message.publish()
-                        return AgentResponse(
-                            status=AgentStatus.ERROR,
-                            message=f"Could not find pathway with name '{name}'"
-                        )
-                
-                if not pathway_id:
-                    text_content.status = MsgStatus.error
-                    text_content.status_message = "Please provide either a pathway ID or name to update"
-                    self.output_message.publish()
-                    return AgentResponse(
-                        status=AgentStatus.ERROR,
-                        message="Please provide either a pathway ID or name to update"
-                    )
-                
-                # Get analysis data
-                analysis_data = self._get_analysis_data(analysis_id)
-                if not analysis_data:
-                    text_content.status = MsgStatus.error
-                    text_content.status_message = f"Analysis data not found for ID {analysis_id}"
-                    self.output_message.publish()
-                    return AgentResponse(
-                        status=AgentStatus.ERROR,
-                        message=f"Analysis data not found for ID {analysis_id}"
-                    )
-                
-                try:
-                    # Create knowledge base
-                    kb_name = f"Sales Analysis KB - {analysis_id}"
-                    kb_result = self.bland_ai_service.create_knowledge_base(
-                        name=kb_name,
-                        description=analysis_data["knowledge_base"]["summary"],
-                        content=analysis_data["knowledge_base"]
-                    )
-                    
-                    # Store voice prompts
-                    prompt_results = []
-                    for idx, prompt in enumerate(analysis_data["voice_prompts"]):
-                        prompt_name = f"Voice Prompt {idx+1} - Analysis {analysis_id}"
-                        result = self.bland_ai_service.store_prompt(
-                            prompt=prompt,
-                            name=prompt_name
-                        )
-                        prompt_results.append(result)
-                    
-                    # Transform analysis data to pathway format with KB and prompts
-                    nodes, edges = self.transformer.transform_to_pathway(
-                        analysis_data,
-                        kb_id=kb_result.get("kb_id"),
-                        prompt_ids=[p.get("id") for p in prompt_results if p.get("id")]
-                    )
-                    
-                    # Update the pathway
-                    result = self.bland_ai_service.update_pathway(
-                        pathway_id=pathway_id,
-                        nodes=nodes,
-                        edges=edges
-                    )
-                    
-                    text_content.status = MsgStatus.success
-                    text_content.status_message = f"Updated pathway successfully"
-                    text_content.text = (
-                        f"Updated pathway (ID: {pathway_id}) with:\n"
-                        f"- Analysis ID: {analysis_id}\n"
-                        f"- Knowledge Base: {kb_name}\n"
-                        f"- Voice Prompts: {len(prompt_results)} created\n"
-                        f"- Nodes: {len(nodes)} configured\n"
-                        f"- Edges: {len(edges)} configured"
-                    )
-                    self.output_message.publish()
-                    return AgentResponse(
-                        status=AgentStatus.SUCCESS,
-                        message=f"Updated pathway successfully",
-                        data={
-                            "pathway": result,
-                            "knowledge_base": kb_result,
-                            "prompts": prompt_results
-                        }
-                    )
-                except Exception as e:
-                    text_content.status = MsgStatus.error
-                    text_content.status_message = f"Failed to update pathway: {str(e)}"
-                    self.output_message.publish()
-                    return AgentResponse(
-                        status=AgentStatus.ERROR,
-                        message=f"Failed to update pathway: {str(e)}"
-                    )
-                    
-            elif command == "list":
+            if command == "list":
                 try:
                     pathways = self.bland_ai_service.list_pathways()
                     
                     if not pathways:
-                        text_content.text = "No pathways found"
-                        text_content.status = MsgStatus.success
-                        text_content.status_message = "No pathways available"
-                        self.output_message.publish()
-                        return AgentResponse(
-                            status=AgentStatus.SUCCESS,
-                            message="No pathways found",
-                            data={"pathways": []}
-                        )
+                        text_content.text = "No pathways found."
+                    else:
+                        pathway_list = []
+                        for p in pathways:
+                            kbs = self.kb_tool.get_pathway_knowledge_bases(p.get("id"))
+                            kb_count = len(kbs)
+                            pathway_list.append(
+                                f"- {p.get('name')} (ID: {p.get('id')})"
+                                f"\n  Description: {p.get('description')}"
+                                f"\n  Knowledge Bases: {kb_count}"
+                            )
+                        
+                        text_content.text = "Available pathways:\n\n" + "\n\n".join(pathway_list)
                     
-                    # Format pathway information
-                    pathway_text = []
-                    for p in pathways:
-                        pathway_info = {
-                            "id": p.get("id", "Unknown"),
-                            "name": p.get("name", "Unnamed Pathway"),
-                            "description": p.get("description", "No description"),
-                            "created_at": p.get("created_at", "Unknown"),
-                            "updated_at": p.get("updated_at", "Unknown")
-                        }
-                        pathway_text.append(
-                            f"- {pathway_info['name']}\n"
-                            f"  ID: {pathway_info['id']}\n"
-                            f"  Description: {pathway_info['description']}\n"
-                            f"  Created: {pathway_info['created_at']}\n"
-                            f"  Updated: {pathway_info['updated_at']}"
-                        )
-                    
-                    text_content.text = f"Found {len(pathways)} pathways:\n\n" + "\n\n".join(pathway_text)
                     text_content.status = MsgStatus.success
-                    text_content.status_message = "Retrieved available pathways"
+                    text_content.status_message = "Retrieved pathways"
                     self.output_message.publish()
                     
                     return AgentResponse(
                         status=AgentStatus.SUCCESS,
-                        message="Retrieved available pathways",
-                        data={"pathways": pathways}
+                        message="Retrieved pathways successfully",
+                        data=pathways
                     )
                     
                 except Exception as e:
@@ -347,6 +171,365 @@ class BlandAI_Agent(BaseAgent):
                         message=f"Failed to list pathways: {str(e)}"
                     )
                     
+            elif command == "get":
+                if not pathway_id:
+                    text_content.status = MsgStatus.error
+                    text_content.status_message = "Pathway ID is required"
+                    self.output_message.publish()
+                    return AgentResponse(
+                        status=AgentStatus.ERROR,
+                        message="Pathway ID is required"
+                    )
+                    
+                try:
+                    pathway = self.bland_ai_service.get_pathway(pathway_id)
+                    kbs = self.kb_tool.get_pathway_knowledge_bases(pathway_id)
+                    
+                    # Format pathway details
+                    details = [
+                        f"Name: {pathway.get('name')}",
+                        f"Description: {pathway.get('description')}",
+                        f"ID: {pathway.get('id')}",
+                        f"\nKnowledge Bases ({len(kbs)}):"
+                    ]
+                    
+                    for kb in kbs:
+                        details.append(f"- {kb.get('name')} (ID: {kb.get('kb_id')})")
+                        
+                    details.append("\nNodes:")
+                    for node_id, node in pathway.get('nodes', {}).items():
+                        details.append(
+                            f"- {node.get('name')} ({node_id})"
+                            f"\n  Type: {node.get('type')}"
+                            f"\n  Tools: {', '.join(node.get('tools', []))}"
+                        )
+                    
+                    text_content.text = "\n".join(details)
+                    text_content.status = MsgStatus.success
+                    text_content.status_message = "Retrieved pathway details"
+                    self.output_message.publish()
+                    
+                    return AgentResponse(
+                        status=AgentStatus.SUCCESS,
+                        message="Retrieved pathway details successfully",
+                        data=pathway
+                    )
+                    
+                except Exception as e:
+                    text_content.status = MsgStatus.error
+                    text_content.status_message = f"Failed to get pathway: {str(e)}"
+                    self.output_message.publish()
+                    return AgentResponse(
+                        status=AgentStatus.ERROR,
+                        message=f"Failed to get pathway: {str(e)}"
+                    )
+            
+            elif command == "create_empty":
+                if not name or not description:
+                    text_content.status = MsgStatus.error
+                    text_content.status_message = "Name and description are required"
+                    self.output_message.publish()
+                    return AgentResponse(
+                        status=AgentStatus.ERROR,
+                        message="Name and description are required"
+                    )
+                    
+                try:
+                    result = self.bland_ai_service.create_pathway(
+                        name=name,
+                        description=description
+                    )
+                    text_content.status = MsgStatus.success
+                    text_content.status_message = f"Created pathway '{name}' successfully"
+                    text_content.text = (
+                        f"Created new pathway:\n"
+                        f"Name: {name}\n"
+                        f"Description: {description}\n"
+                        f"ID: {result.get('id')}"
+                    )
+                    self.output_message.publish()
+                    return AgentResponse(
+                        status=AgentStatus.SUCCESS,
+                        message=f"Created pathway '{name}' successfully",
+                        data=result
+                    )
+                except Exception as e:
+                    text_content.status = MsgStatus.error
+                    text_content.status_message = f"Failed to create pathway: {str(e)}"
+                    self.output_message.publish()
+                    return AgentResponse(
+                        status=AgentStatus.ERROR,
+                        message=f"Failed to create pathway: {str(e)}"
+                    )
+                    
+            elif command == "create":
+                if not name or not description or not analysis_id:
+                    text_content.status = MsgStatus.error
+                    text_content.status_message = "Name, description, and analysis_id are required"
+                    self.output_message.publish()
+                    return AgentResponse(
+                        status=AgentStatus.ERROR,
+                        message="Name, description, and analysis_id are required"
+                    )
+                    
+                try:
+                    # Get analysis data
+                    analysis_data = self._get_analysis_data(analysis_id)
+                    if not analysis_data:
+                        text_content.status = MsgStatus.error
+                        text_content.status_message = f"Analysis data not found for ID {analysis_id}"
+                        self.output_message.publish()
+                        return AgentResponse(
+                            status=AgentStatus.ERROR,
+                            message=f"Analysis data not found for ID {analysis_id}"
+                        )
+                    
+                    # Create knowledge base
+                    kb_name = f"Sales Analysis KB - {name}"
+                    kb_result = self.kb_tool.create_from_analysis(
+                        analysis_data=analysis_data,
+                        name=kb_name
+                    )
+                    
+                    # Create pathway with nodes using KB
+                    nodes = self.transformer.create_nodes_from_analysis(
+                        analysis_data=analysis_data,
+                        kb_id=kb_result.get("vector_id")
+                    )
+                    edges = self.transformer.create_edges(nodes)
+                    
+                    # Create pathway
+                    pathway_result = self.bland_ai_service.create_pathway(
+                        name=name,
+                        description=description,
+                        nodes=nodes,
+                        edges=edges
+                    )
+                    
+                    # Link KB to pathway
+                    self.kb_tool.link_to_pathway(
+                        kb_id=kb_result.get("vector_id"),
+                        pathway_id=pathway_result.get("id")
+                    )
+                    
+                    text_content.status = MsgStatus.success
+                    text_content.status_message = f"Created pathway '{name}' with knowledge base"
+                    text_content.text = (
+                        f"Created new pathway with knowledge base:\n"
+                        f"Name: {name}\n"
+                        f"Description: {description}\n"
+                        f"ID: {pathway_result.get('id')}\n"
+                        f"Knowledge Base ID: {kb_result.get('vector_id')}\n"
+                        f"Nodes: {len(nodes)}\n"
+                        f"Edges: {len(edges)}"
+                    )
+                    self.output_message.publish()
+                    
+                    return AgentResponse(
+                        status=AgentStatus.SUCCESS,
+                        message=f"Created pathway '{name}' successfully",
+                        data={
+                            "pathway": pathway_result,
+                            "knowledge_base": kb_result
+                        }
+                    )
+                    
+                except Exception as e:
+                    text_content.status = MsgStatus.error
+                    text_content.status_message = f"Failed to create pathway: {str(e)}"
+                    self.output_message.publish()
+                    return AgentResponse(
+                        status=AgentStatus.ERROR,
+                        message=f"Failed to create pathway: {str(e)}"
+                    )
+                    
+            elif command == "update":
+                if not pathway_id:
+                    text_content.status = MsgStatus.error
+                    text_content.status_message = "Pathway ID is required"
+                    self.output_message.publish()
+                    return AgentResponse(
+                        status=AgentStatus.ERROR,
+                        message="Pathway ID is required"
+                    )
+                    
+                try:
+                    # Get current pathway
+                    current = self.bland_ai_service.get_pathway(pathway_id)
+                    
+                    # Build updates
+                    updates = {}
+                    if name:
+                        updates["name"] = name
+                    if description:
+                        updates["description"] = description
+                        
+                    # If analysis_id provided, update nodes
+                    if analysis_id:
+                        analysis_data = self._get_analysis_data(analysis_id)
+                        if not analysis_data:
+                            text_content.status = MsgStatus.error
+                            text_content.status_message = f"Analysis data not found for ID {analysis_id}"
+                            self.output_message.publish()
+                            return AgentResponse(
+                                status=AgentStatus.ERROR,
+                                message=f"Analysis data not found for ID {analysis_id}"
+                            )
+                            
+                        # Create new KB
+                        kb_name = f"Sales Analysis KB - Update {datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                        kb_result = self.kb_tool.create_from_analysis(
+                            analysis_data=analysis_data,
+                            name=kb_name
+                        )
+                        
+                        # Create new nodes using KB
+                        updates["nodes"] = self.transformer.create_nodes_from_analysis(
+                            analysis_data=analysis_data,
+                            kb_id=kb_result.get("vector_id")
+                        )
+                        updates["edges"] = self.transformer.create_edges(updates["nodes"])
+                        
+                        # Link new KB
+                        self.kb_tool.link_to_pathway(
+                            kb_id=kb_result.get("vector_id"),
+                            pathway_id=pathway_id
+                        )
+                    
+                    # Update pathway
+                    result = self.bland_ai_service.update_pathway(
+                        pathway_id=pathway_id,
+                        updates=updates
+                    )
+                    
+                    text_content.status = MsgStatus.success
+                    text_content.status_message = f"Updated pathway successfully"
+                    text_content.text = f"Updated pathway {pathway_id}"
+                    if analysis_id:
+                        text_content.text += f"\nAdded new knowledge base: {kb_result.get('vector_id')}"
+                    self.output_message.publish()
+                    
+                    return AgentResponse(
+                        status=AgentStatus.SUCCESS,
+                        message="Updated pathway successfully",
+                        data=result
+                    )
+                    
+                except Exception as e:
+                    text_content.status = MsgStatus.error
+                    text_content.status_message = f"Failed to update pathway: {str(e)}"
+                    self.output_message.publish()
+                    return AgentResponse(
+                        status=AgentStatus.ERROR,
+                        message=f"Failed to update pathway: {str(e)}"
+                    )
+                    
+            elif command == "add_kb":
+                if not pathway_id or not kb_id:
+                    text_content.status = MsgStatus.error
+                    text_content.status_message = "Pathway ID and KB ID are required"
+                    self.output_message.publish()
+                    return AgentResponse(
+                        status=AgentStatus.ERROR,
+                        message="Pathway ID and KB ID are required"
+                    )
+                    
+                try:
+                    # Link KB to pathway
+                    self.kb_tool.link_to_pathway(kb_id=kb_id, pathway_id=pathway_id)
+                    
+                    # Get pathway and update nodes to use KB
+                    pathway = self.bland_ai_service.get_pathway(pathway_id)
+                    nodes = pathway.get("nodes", {})
+                    
+                    # Add KB to tools for each node
+                    for node_id, node in nodes.items():
+                        tools = node.get("tools", [])
+                        if kb_id not in tools:
+                            tools.append(kb_id)
+                            node["tools"] = tools
+                    
+                    # Update pathway
+                    result = self.bland_ai_service.update_pathway(
+                        pathway_id=pathway_id,
+                        updates={"nodes": nodes}
+                    )
+                    
+                    text_content.status = MsgStatus.success
+                    text_content.status_message = "Added knowledge base to pathway"
+                    text_content.text = f"Added knowledge base {kb_id} to pathway {pathway_id}"
+                    self.output_message.publish()
+                    
+                    return AgentResponse(
+                        status=AgentStatus.SUCCESS,
+                        message="Added knowledge base to pathway",
+                        data=result
+                    )
+                    
+                except Exception as e:
+                    text_content.status = MsgStatus.error
+                    text_content.status_message = f"Failed to add knowledge base: {str(e)}"
+                    self.output_message.publish()
+                    return AgentResponse(
+                        status=AgentStatus.ERROR,
+                        message=f"Failed to add knowledge base: {str(e)}"
+                    )
+                    
+            elif command == "remove_kb":
+                if not pathway_id or not kb_id:
+                    text_content.status = MsgStatus.error
+                    text_content.status_message = "Pathway ID and KB ID are required"
+                    self.output_message.publish()
+                    return AgentResponse(
+                        status=AgentStatus.ERROR,
+                        message="Pathway ID and KB ID are required"
+                    )
+                    
+                try:
+                    # Get pathway
+                    pathway = self.bland_ai_service.get_pathway(pathway_id)
+                    nodes = pathway.get("nodes", {})
+                    
+                    # Remove KB from tools for each node
+                    for node_id, node in nodes.items():
+                        tools = node.get("tools", [])
+                        if kb_id in tools:
+                            tools.remove(kb_id)
+                            node["tools"] = tools
+                    
+                    # Update pathway
+                    result = self.bland_ai_service.update_pathway(
+                        pathway_id=pathway_id,
+                        updates={"nodes": nodes}
+                    )
+                    
+                    # Remove KB link
+                    query = """
+                        DELETE FROM pathway_knowledge_bases
+                        WHERE pathway_id = ? AND kb_id = ?
+                    """
+                    self.db.execute(query, (pathway_id, kb_id))
+                    
+                    text_content.status = MsgStatus.success
+                    text_content.status_message = "Removed knowledge base from pathway"
+                    text_content.text = f"Removed knowledge base {kb_id} from pathway {pathway_id}"
+                    self.output_message.publish()
+                    
+                    return AgentResponse(
+                        status=AgentStatus.SUCCESS,
+                        message="Removed knowledge base from pathway",
+                        data=result
+                    )
+                    
+                except Exception as e:
+                    text_content.status = MsgStatus.error
+                    text_content.status_message = f"Failed to remove knowledge base: {str(e)}"
+                    self.output_message.publish()
+                    return AgentResponse(
+                        status=AgentStatus.ERROR,
+                        message=f"Failed to remove knowledge base: {str(e)}"
+                    )
+            
             else:
                 text_content.status = MsgStatus.error
                 text_content.status_message = f"Unknown command: {command}"
@@ -357,44 +540,20 @@ class BlandAI_Agent(BaseAgent):
                 )
                 
         except Exception as e:
-            logger.error(f"Error in BlandAI_Agent: {str(e)}", exc_info=True)
-            text_content = TextContent(
-                agent_name=self.name,
-                status=MsgStatus.error,
-                status_message=f"Error: {str(e)}"
-            )
-            self.output_message.content.append(text_content)
+            text_content.status = MsgStatus.error
+            text_content.status_message = f"Error: {str(e)}"
             self.output_message.publish()
             return AgentResponse(
                 status=AgentStatus.ERROR,
-                message=str(e)
+                message=f"Error: {str(e)}"
             )
             
     def _get_analysis_data(self, analysis_id: str) -> Optional[Dict]:
-        """Retrieve analysis data from the database"""
+        """Get analysis data from database"""
         try:
-            # Get the analysis result from the database
-            analysis = self.db.get_analysis_result(analysis_id)
-            if not analysis:
-                logger.error(f"No analysis found with ID: {analysis_id}")
-                return None
-                
-            # Extract the relevant data
-            return {
-                "knowledge_base": {
-                    "sales_techniques": analysis.get("sales_techniques", []),
-                    "objection_handling": analysis.get("objection_handling", []),
-                    "training_pairs": analysis.get("training_pairs", []),
-                    "summary": analysis.get("summary", "")
-                },
-                "voice_prompts": analysis.get("voice_prompts", []),
-                "metadata": {
-                    "analysis_id": analysis_id,
-                    "timestamp": datetime.now().isoformat(),
-                    "source": "sales_prompt_extractor"
-                }
-            }
-            
+            query = "SELECT data FROM sales_analyses WHERE id = ?"
+            result = self.db.fetch_one(query, (analysis_id,))
+            return result.get("data") if result else None
         except Exception as e:
-            logger.error(f"Error retrieving analysis data: {str(e)}", exc_info=True)
+            logger.error(f"Error getting analysis data: {str(e)}")
             return None 

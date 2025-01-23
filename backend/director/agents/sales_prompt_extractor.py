@@ -109,6 +109,7 @@ class SalesAnalysisContent(TextContent):
     voice_prompt: str = ""
     structured_data: Dict = {}
     training_data: List[Dict] = []
+    text_color: str = "#E4E4E7"  # Light gray color for dark theme readability
     
     def __init__(self, analysis_data: Dict = None, anthropic_response: Dict = None, 
                  voice_prompt: str = "", structured_data: Dict = None, 
@@ -119,6 +120,7 @@ class SalesAnalysisContent(TextContent):
         self.voice_prompt = voice_prompt
         self.structured_data = structured_data if structured_data is not None else {}
         self.training_data = training_data if training_data is not None else []
+        self.text_color = "#E4E4E7"  # Light gray color for dark theme readability
 
     def to_dict(self) -> Dict:
         base_dict = super().to_dict()
@@ -127,7 +129,8 @@ class SalesAnalysisContent(TextContent):
             "anthropic_response": self.anthropic_response.dict() if self.anthropic_response else None,
             "voice_prompt": self.voice_prompt,
             "structured_data": self.structured_data,
-            "training_data": self.training_data
+            "training_data": self.training_data,
+            "text_color": self.text_color
         })
         return base_dict
 

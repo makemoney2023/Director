@@ -151,7 +151,7 @@ class ChatHandler:
                     # Direct agent call for bland_ai
                     agent = agents_mapping["bland_ai"]
                     # Parse the command from the message text
-                    text = message.get("text", "").strip()
+                    text = message.get("content", [{}])[0].get("text", "").strip()
                     if text.startswith("@bland_ai"):
                         # Extract command and parameters
                         parts = text[len("@bland_ai"):].strip().split()
@@ -160,20 +160,32 @@ class ChatHandler:
                             help_message = (
                                 "Available commands:\n"
                                 "- create_empty name=\"Name\" description=\"Description\": Create a new empty pathway\n"
-                                "- update name=\"Name\": Update a pathway with latest analysis\n"
+                                "- create name=\"Name\" description=\"Description\" analysis_id=\"ID\": Create pathway from analysis\n"
+                                "- update pathway_id=\"ID\" [name=\"Name\"] [description=\"Description\"]: Update pathway\n"
+                                "- get pathway_id=\"ID\": Get pathway details\n"
                                 "- list: List all available pathways\n"
-                                "- stats pathway_id=ID: Get statistics for a pathway"
+                                "- add_kb pathway_id=\"ID\" kb_id=\"ID\": Add knowledge base to pathway\n"
+                                "- remove_kb pathway_id=\"ID\" kb_id=\"ID\": Remove knowledge base from pathway"
                             )
-                            session.output_message.content.append(TextContent(
-                                agent_name="bland_ai",
-                                status=MsgStatus.success,
-                                status_message="Help information",
-                                text=help_message
-                            ))
-                            session.output_message.status = MsgStatus.success
-                            session.output_message.publish()
-                            return session.output_message.model_dump()
-                            
+                            return {
+                                "status": "success",
+                                "message": "Help information provided",
+                                "session_id": session.session_id,
+                                "conv_id": session.conv_id,
+                                "msg_type": "output",
+                                "content": [{
+                                    "type": "text",
+                                    "text": help_message,
+                                    "status": "success",
+                                    "status_message": "Help information",
+                                    "agent_name": "bland_ai"
+                                }],
+                                "actions": [],
+                                "agents": ["bland_ai"],
+                                "metadata": {
+                                    "timestamp": datetime.now().isoformat()
+                                }
+                            }
                         command = parts[0]
                         params = {}
                         for part in parts[1:]:
@@ -192,6 +204,7 @@ class ChatHandler:
                         session.output_message = response
                         session.output_message.status = MsgStatus.success
                         session.output_message.publish()
+                        return session.output_message.model_dump()
                 else:
                     # Use reasoning engine for all other cases
                     res_eng = ReasoningEngine(input_message=input_message, session=session)

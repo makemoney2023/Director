@@ -59,77 +59,86 @@ class BlandAIService:
     def list_pathways(self) -> List[Dict]:
         """Get all available pathways"""
         response = requests.get(
-            f"{self.base_api_url}/pathway",
+            f"{self.base_api_url}/pathways",
             headers=self.headers
         )
         
         if response.status_code == 200:
-            data = response.json()
-            # Handle both list and dict responses
-            if isinstance(data, dict):
-                return data.get("pathways", [])
-            elif isinstance(data, list):
-                return data
-            else:
-                return []
+            return response.json().get("pathways", [])
         else:
             self._handle_error_response(response)
 
-    def create_pathway(self, name: str, description: str) -> Dict:
-        """Create a new pathway with default start and end nodes"""
+    def get_pathway(self, pathway_id: str) -> Dict:
+        """Get details for a specific pathway
+        
+        Args:
+            pathway_id: ID of the pathway to retrieve
+            
+        Returns:
+            Pathway details including nodes and edges
+        """
+        response = requests.get(
+            f"{self.base_api_url}/pathways/{pathway_id}",
+            headers=self.headers
+        )
+        
+        if response.status_code == 200:
+            return response.json()
+        else:
+            self._handle_error_response(response)
+
+    def create_pathway(self, name: str, description: str, nodes: Optional[Dict] = None, edges: Optional[Dict] = None) -> Dict:
+        """Create a new pathway
+        
+        Args:
+            name: Name of the pathway
+            description: Description of the pathway
+            nodes: Optional dictionary of nodes (will create default if not provided)
+            edges: Optional dictionary of edges (will create default if not provided)
+            
+        Returns:
+            Created pathway data
+        """
         try:
-            # Create default nodes
-            start_node = {
-                "id": "start",
-                "type": "Default",
-                "data": {
-                    "name": "Start",
-                    "text": f"Hello! This is the {name} pathway. How can I help you today?",
-                    "isStart": True
+            if nodes is None or edges is None:
+                # Create default nodes
+                nodes = {
+                    "start": {
+                        "name": "Start",
+                        "type": "Default",
+                        "isStart": True,
+                        "prompt": f"Hello! This is the {name} pathway. How can I help you today?"
+                    },
+                    "end": {
+                        "name": "End Call",
+                        "type": "End Call",
+                        "prompt": "Thank you for your time. Have a great day!"
+                    }
                 }
-            }
-            
-            end_node = {
-                "id": "end",
-                "type": "End Call",
-                "data": {
-                    "name": "End Call",
-                    "text": "Thank you for your time. Have a great day!"
+                
+                # Create default edge
+                edges = {
+                    "start_to_end": {
+                        "source": "start",
+                        "target": "end",
+                        "label": "Default Flow"
+                    }
                 }
-            }
-            
-            # Create default edge
-            default_edge = {
-                "id": "start_to_end",
-                "source": "start",
-                "target": "end",
-                "data": {
-                    "name": "Default Flow"
-                }
-            }
 
-            # Store the greeting prompt
-            greeting_prompt = self.store_prompt(start_node["data"]["text"])
-            if greeting_prompt and "id" in greeting_prompt:
-                start_node["data"]["prompt_id"] = greeting_prompt["id"]
-                del start_node["data"]["text"]
-
-            # Store the closing prompt
-            closing_prompt = self.store_prompt(end_node["data"]["text"])
-            if closing_prompt and "id" in closing_prompt:
-                end_node["data"]["prompt_id"] = closing_prompt["id"]
-                del end_node["data"]["text"]
-
-            # Create pathway with default structure
-            url = f"{self.base_api_url}/pathway/create"
+            # Create pathway
+            url = f"{self.base_api_url}/pathways"
             payload = {
                 "name": name,
                 "description": description,
-                "nodes": [start_node, end_node],
-                "edges": [default_edge]
+                "nodes": nodes,
+                "edges": edges
             }
             
-            response = requests.post(url, headers=self.headers, json=payload)
+            response = requests.post(
+                url,
+                headers=self.headers,
+                json=payload
+            )
             
             if response.status_code == 200:
                 return response.json()
@@ -139,39 +148,39 @@ class BlandAIService:
         except Exception as e:
             raise DirectorException(f"Failed to create pathway: {str(e)}")
 
-    def update_pathway(self, pathway_id: str, nodes: Dict, edges: Dict) -> Dict:
-        """Update an existing pathway with new nodes and edges"""
-        # First store voice prompts for each node
-        for node_id, node in nodes.items():
-            if node.get("text"):
-                try:
-                    prompt_response = self.store_prompt(
-                        prompt=node["text"],
-                        name=f"{node['name']} - {pathway_id}"
-                    )
-                    # Update node with stored prompt reference
-                    node["prompt_id"] = prompt_response.get("id")
-                    # Remove the text field as we'll use the prompt_id
-                    del node["text"]
-                except Exception as e:
-                    logger.warning(f"Failed to store prompt for node {node_id}: {str(e)}")
+    def update_pathway(self, pathway_id: str, updates: Dict) -> Dict:
+        """Update an existing pathway
         
-        url = f"{self.base_api_url}/pathway/{pathway_id}"
-        payload = {
-            "nodes": nodes,
-            "edges": edges
-        }
-        
-        response = requests.post(
-            url,
-            headers=self.headers,
-            json=payload
-        )
-        
-        if response.status_code == 200:
-            return response.json()
-        else:
-            self._handle_error_response(response)
+        Args:
+            pathway_id: ID of the pathway to update
+            updates: Dictionary containing updates (name, description, nodes, edges)
+            
+        Returns:
+            Updated pathway data
+        """
+        try:
+            # Validate updates
+            if "nodes" in updates or "edges" in updates:
+                self._validate_pathway_data(
+                    updates.get("nodes", {}),
+                    updates.get("edges", {})
+                )
+            
+            url = f"{self.base_api_url}/pathways/{pathway_id}"
+            
+            response = requests.patch(
+                url,
+                headers=self.headers,
+                json=updates
+            )
+            
+            if response.status_code == 200:
+                return response.json()
+            else:
+                self._handle_error_response(response)
+                
+        except Exception as e:
+            raise DirectorException(f"Failed to update pathway: {str(e)}")
 
     def _validate_pathway_data(self, nodes: Dict, edges: Dict) -> bool:
         """Validate pathway data before sending to API"""
@@ -224,7 +233,7 @@ class BlandAIService:
             self._handle_error_response(response) 
 
     def create_knowledge_base(self, name: str, description: str, content: Dict) -> Dict:
-        """Create a new knowledge base with content from sales analysis
+        """Create a new vector knowledge base with content from sales analysis
         
         Args:
             name: Name of the knowledge base
@@ -235,36 +244,52 @@ class BlandAIService:
             Response from Bland AI API containing knowledge base ID
         """
         try:
-            url = f"{self.base_api_url}/knowledge"
+            url = f"{self.base_api_url}/knowledgebases"
             
-            # Format content for knowledge base
-            formatted_content = {
-                "sales_techniques": [
-                    {
-                        "title": technique.get("name", ""),
-                        "description": technique.get("description", ""),
-                        "examples": technique.get("examples", []),
-                        "effectiveness": technique.get("effectiveness", "")
-                    }
-                    for technique in content.get("sales_techniques", [])
-                ],
-                "objection_handling": [
-                    {
-                        "objection": obj.get("objection", ""),
-                        "response": obj.get("response", ""),
-                        "examples": obj.get("examples", [])
-                    }
-                    for obj in content.get("objection_handling", [])
-                ],
-                "training_examples": content.get("training_pairs", []),
-                "summary": content.get("summary", "")
-            }
+            # Format content into a single text document for vectorization
+            text_content = []
+            
+            # Add summary
+            if content.get("summary"):
+                text_content.append(f"Summary:\n{content['summary']}\n")
+            
+            # Add sales techniques
+            if content.get("sales_techniques"):
+                text_content.append("\nSales Techniques:")
+                for technique in content["sales_techniques"]:
+                    text_content.append(f"\n- {technique.get('name', '')}")
+                    text_content.append(f"  Description: {technique.get('description', '')}")
+                    if technique.get('examples'):
+                        text_content.append("  Examples:")
+                        for example in technique['examples']:
+                            text_content.append(f"    * {example}")
+                    if technique.get('effectiveness'):
+                        text_content.append(f"  Effectiveness: {technique['effectiveness']}")
+            
+            # Add objection handling
+            if content.get("objection_handling"):
+                text_content.append("\nObjection Handling:")
+                for obj in content["objection_handling"]:
+                    text_content.append(f"\n- Objection: {obj.get('objection', '')}")
+                    text_content.append(f"  Response: {obj.get('response', '')}")
+                    if obj.get('examples'):
+                        text_content.append("  Examples:")
+                        for example in obj['examples']:
+                            text_content.append(f"    * {example}")
+            
+            # Add training examples
+            if content.get("training_pairs"):
+                text_content.append("\nTraining Examples:")
+                for pair in content["training_pairs"]:
+                    text_content.append(f"\nInput: {pair.get('input', '')}")
+                    text_content.append(f"Output: {pair.get('output', '')}")
+                    if pair.get('context'):
+                        text_content.append(f"Context: {pair['context']}")
             
             payload = {
                 "name": name,
                 "description": description,
-                "content": formatted_content,
-                "type": "sales_analysis"
+                "text": "\n".join(text_content)
             }
             
             response = requests.post(
@@ -279,4 +304,203 @@ class BlandAIService:
                 self._handle_error_response(response)
                 
         except Exception as e:
-            raise DirectorException(f"Failed to create knowledge base: {str(e)}") 
+            raise DirectorException(f"Failed to create knowledge base: {str(e)}")
+
+    def update_knowledge_base(self, kb_id: str, name: str, description: str, content: Dict) -> Dict:
+        """Update an existing knowledge base
+        
+        Args:
+            kb_id: ID of the knowledge base to update
+            name: New name for the knowledge base
+            description: New description for the knowledge base
+            content: New content for the knowledge base
+            
+        Returns:
+            Updated knowledge base metadata
+        """
+        try:
+            url = f"{self.base_api_url}/knowledgebases/{kb_id}"
+            
+            # Format content into text same as create
+            text_content = []
+            
+            if content.get("summary"):
+                text_content.append(f"Summary:\n{content['summary']}\n")
+            
+            if content.get("sales_techniques"):
+                text_content.append("\nSales Techniques:")
+                for technique in content["sales_techniques"]:
+                    text_content.append(f"\n- {technique.get('name', '')}")
+                    text_content.append(f"  Description: {technique.get('description', '')}")
+                    if technique.get('examples'):
+                        text_content.append("  Examples:")
+                        for example in technique['examples']:
+                            text_content.append(f"    * {example}")
+                    if technique.get('effectiveness'):
+                        text_content.append(f"  Effectiveness: {technique['effectiveness']}")
+            
+            if content.get("objection_handling"):
+                text_content.append("\nObjection Handling:")
+                for obj in content["objection_handling"]:
+                    text_content.append(f"\n- Objection: {obj.get('objection', '')}")
+                    text_content.append(f"  Response: {obj.get('response', '')}")
+                    if obj.get('examples'):
+                        text_content.append("  Examples:")
+                        for example in obj['examples']:
+                            text_content.append(f"    * {example}")
+            
+            if content.get("training_pairs"):
+                text_content.append("\nTraining Examples:")
+                for pair in content["training_pairs"]:
+                    text_content.append(f"\nInput: {pair.get('input', '')}")
+                    text_content.append(f"Output: {pair.get('output', '')}")
+                    if pair.get('context'):
+                        text_content.append(f"Context: {pair['context']}")
+            
+            payload = {
+                "name": name,
+                "description": description,
+                "text": "\n".join(text_content)
+            }
+            
+            response = requests.patch(
+                url,
+                headers=self.headers,
+                json=payload
+            )
+            
+            if response.status_code == 200:
+                return response.json()
+            else:
+                self._handle_error_response(response)
+                
+        except Exception as e:
+            raise DirectorException(f"Failed to update knowledge base: {str(e)}")
+
+    def query_knowledge_base(self, kb_id: str, query: str, top_k: int = 5) -> List[Dict]:
+        """Query a knowledge base using vector similarity search
+        
+        Args:
+            kb_id: ID of the knowledge base to query
+            query: Query text to search for
+            top_k: Number of results to return (default 5)
+            
+        Returns:
+            List of matching knowledge base entries
+        """
+        try:
+            url = f"{self.base_api_url}/vectors/query"
+            
+            payload = {
+                "kb_id": kb_id,
+                "query": query,
+                "top_k": top_k
+            }
+            
+            response = requests.post(
+                url,
+                headers=self.headers,
+                json=payload
+            )
+            
+            if response.status_code == 200:
+                return response.json().get("results", [])
+            else:
+                self._handle_error_response(response)
+                
+        except Exception as e:
+            raise DirectorException(f"Failed to query knowledge base: {str(e)}")
+
+    def list_knowledge_bases(self, include_text: bool = False) -> List[Dict]:
+        """List all knowledge bases in the account
+        
+        Args:
+            include_text: Whether to include the full text content (default False)
+            
+        Returns:
+            List of knowledge base metadata
+        """
+        try:
+            url = f"{self.base_api_url}/knowledgebases"
+            if include_text:
+                url += "?include_text=true"
+                
+            response = requests.get(
+                url,
+                headers=self.headers
+            )
+            
+            if response.status_code == 200:
+                return response.json().get("vectors", [])
+            else:
+                self._handle_error_response(response)
+                
+        except Exception as e:
+            raise DirectorException(f"Failed to list knowledge bases: {str(e)}")
+            
+    def get_knowledge_base(self, kb_id: str, include_text: bool = False) -> Dict:
+        """Get details for a specific knowledge base
+        
+        Args:
+            kb_id: ID of the knowledge base
+            include_text: Whether to include the full text content (default False)
+            
+        Returns:
+            Knowledge base metadata and optionally content
+        """
+        try:
+            url = f"{self.base_api_url}/knowledgebases/{kb_id}"
+            if include_text:
+                url += "?include_text=true"
+                
+            response = requests.get(
+                url,
+                headers=self.headers
+            )
+            
+            if response.status_code == 200:
+                return response.json()
+            else:
+                self._handle_error_response(response)
+                
+        except Exception as e:
+            raise DirectorException(f"Failed to get knowledge base details: {str(e)}")
+            
+    def upload_knowledge_base_file(self, file_path: str, name: Optional[str] = None, description: Optional[str] = None) -> Dict:
+        """Upload a text file as a new knowledge base
+        
+        Args:
+            file_path: Path to the text file (.pdf, .txt, .doc, or .docx)
+            name: Optional name for the knowledge base
+            description: Optional description for the knowledge base
+            
+        Returns:
+            Created knowledge base metadata
+        """
+        try:
+            url = f"{self.base_api_url}/knowledgebases/upload"
+            
+            files = {
+                'file': open(file_path, 'rb')
+            }
+            
+            data = {}
+            if name:
+                data['name'] = name
+            if description:
+                data['description'] = description
+                
+            response = requests.post(
+                url,
+                headers=self.headers,
+                files=files,
+                data=data
+            )
+            
+            if response.status_code == 200:
+                return response.json()
+            else:
+                self._handle_error_response(response)
+                
+        except Exception as e:
+            raise DirectorException(f"Failed to upload knowledge base file: {str(e)}") 

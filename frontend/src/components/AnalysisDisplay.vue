@@ -168,25 +168,27 @@ h4 {
 }
 
 .structured-data-item {
-  background: #f8f9fa;
+  background: #1e1e1e;
   padding: 1rem;
   border-radius: 4px;
   margin-bottom: 1rem;
+  border: 1px solid #333;
 }
 
 .code-block {
-  background: #f1f1f1;
+  background: #1e1e1e;
   padding: 1rem;
   border-radius: 4px;
   overflow-x: auto;
   font-family: monospace;
+  border: 1px solid #333;
 }
 
 .debug-info {
   margin-top: 2rem;
   padding: 1rem;
-  background: #f8f9fa;
-  border: 1px solid #e9ecef;
+  background: #1e1e1e;
+  border: 1px solid #333;
   border-radius: 4px;
 }
 
