@@ -5,6 +5,7 @@ import logging
 from enum import Enum
 from dataclasses import dataclass
 import json
+from openai import OpenAI  # Updated import
 
 logger = logging.getLogger(__name__)
 
@@ -60,44 +61,81 @@ class PathwayStructureTransformer:
         try:
             logger.info(f"Starting transformation of {len(outputs)} outputs")
             
-            # Group outputs by type and analyze relationships
-            grouped_outputs = self._group_and_analyze_outputs(outputs)
+            # Generate structured pathway using GPT-4
+            structured_data = self._generate_structured_pathway(outputs)
             
-            # Extract prompt IDs if available
-            prompt_ids = []
-            for output in outputs:
-                if output.get("output_type") == "voice_prompt":
-                    prompt_id = output.get("id")
-                    if prompt_id:
-                        prompt_ids.append(prompt_id)
+            # Convert structured data to Bland AI format
+            nodes = {}
+            edges = {}
             
-            if not prompt_ids:
-                logger.warning("No voice prompts found in outputs")
-            else:
-                logger.info(f"Found {len(prompt_ids)} voice prompts")
+            # Process nodes first and store their IDs
+            node_ids = []
+            for idx, node in enumerate(structured_data["nodes"]):
+                position = self._calculate_position(idx // 3, idx % 3)  # Arrange nodes in a grid
+                
+                node_data = {
+                    "name": node["name"],
+                    "active": False,
+                    "prompt": node["prompt"],
+                    "condition": node["condition"],
+                    "globalPrompt": self._get_global_prompt(),
+                    "modelOptions": node["modelOptions"]
+                }
+                
+                node_id = node.get("id") or str(uuid.uuid4())
+                node_ids.append(node_id)
+                nodes[node_id] = {
+                    "id": node_id,
+                    "type": node["type"],
+                    "data": node_data,
+                    "width": self.node_width,
+                    "height": self.node_height,
+                    "position": position,
+                    "dragging": False,
+                    "selected": False,
+                    "positionAbsolute": position
+                }
             
-            # Create nodes with proper positioning
-            nodes_list = self._create_all_nodes(grouped_outputs, prompt_ids)
+            # Process edges using the stored node IDs
+            for edge in structured_data.get("edges", []):
+                source_idx = edge.get("source")
+                target_idx = edge.get("target")
+                
+                if isinstance(source_idx, int) and isinstance(target_idx, int):
+                    if 0 <= source_idx < len(node_ids) and 0 <= target_idx < len(node_ids):
+                        source_id = node_ids[source_idx]
+                        target_id = node_ids[target_idx]
+                        
+                        edge_id = f"reactflow__edge-{source_id}-{target_id}"
+                        edges[edge_id] = {
+                            "id": edge_id,
+                            "source": source_id,
+                            "target": target_id,
+                            "type": "custom",
+                            "animated": True,
+                            "data": {
+                                "label": edge.get("label", "Continue"),
+                                "description": edge.get("description", "Continue with the conversation flow")
+                            },
+                            "selected": False,
+                            "sourceHandle": None,
+                            "targetHandle": None
+                        }
             
             # Add global nodes
             global_nodes = self._create_global_nodes()
-            nodes_list.extend(global_nodes)
-            
-            # Convert nodes list to dictionary keyed by ID
-            nodes = {node["id"]: node for node in nodes_list}
-            
-            # Create edges between nodes
-            edges_list = self._create_edges(list(nodes.values()))
-            
-            # Add edges from global nodes to appropriate targets
-            for global_node in global_nodes:
-                if global_node["data"].get("isGlobal"):
-                    # Find appropriate target nodes (e.g., transfer nodes)
-                    targets = [n for n in nodes.values() if n["type"] == NodeType.TRANSFER_CALL.value]
-                    for target in targets:
-                        edge = {
-                            "id": f"reactflow__edge-{global_node['id']}-{target['id']}",
-                            "source": global_node["id"],
+            for node in global_nodes:
+                node_id = node["id"]
+                nodes[node_id] = node
+                
+                # Connect global nodes to transfer nodes
+                if node["data"].get("isGlobal"):
+                    transfer_nodes = [n for n in nodes.values() if n["type"] == NodeType.TRANSFER_CALL.value]
+                    for target in transfer_nodes:
+                        edge_id = f"reactflow__edge-{node_id}-{target['id']}"
+                        edges[edge_id] = {
+                            "id": edge_id,
+                            "source": node_id,
                             "target": target["id"],
                             "type": "custom",
                             "animated": True,
@@ -109,10 +147,6 @@ class PathwayStructureTransformer:
                             "sourceHandle": None,
                             "targetHandle": None
                         }
-                        edges_list.append(edge)
-            
-            # Convert edges list to dictionary keyed by ID
-            edges = {edge["id"]: edge for edge in edges_list}
             
             # Validate final structure
             self._validate_pathway_structure(list(nodes.values()), list(edges.values()))
@@ -512,4 +546,121 @@ class PathwayStructureTransformer:
         }
         nodes.append(frustration_node)
         
-        return nodes 
+        return nodes
+
+    def _generate_structured_pathway(self, outputs: List[Dict]) -> Dict:
+        """
+        Generate structured pathway data using GPT-4
+        
+        Args:
+            outputs: List of generated outputs from database
+            
+        Returns:
+            Dict containing structured pathway data with nodes and edges
+        """
+        try:
+            logger.info("Starting structured pathway generation")
+            
+            # Prepare conversation content
+            conversation = []
+            for output in outputs:
+                content = output.get("content", "")
+                if isinstance(content, str):
+                    try:
+                        content = json.loads(content)
+                    except json.JSONDecodeError:
+                        content = {"text": content}
+                conversation.append(content)
+            
+            # Create system prompt
+            system_prompt = """
+            Analyze the conversation and generate a structured pathway with nodes and edges.
+            Return the response in JSON format with the following structure:
+            {
+                "nodes": [
+                    {
+                        "name": "descriptive name",
+                        "type": "one of [Default, End Call, Transfer Call, Knowledge Base]",
+                        "prompt": "what the AI should say",
+                        "condition": "when to use this node",
+                        "modelOptions": {
+                            "modelType": "smart",
+                            "temperature": 0.2,
+                            "skipUserResponse": false,
+                            "block_interruptions": false
+                        }
+                    }
+                ],
+                "edges": [
+                    {
+                        "source": 0,  // Use numeric index (0-based) of the source node in the nodes array
+                        "target": 1,  // Use numeric index (0-based) of the target node in the nodes array
+                        "label": "description of the transition"
+                    }
+                ]
+            }
+            
+            IMPORTANT: For edges, use numeric indices (0-based) of nodes in the nodes array for source and target.
+            For example, if you want to connect the first node to the second node, use source: 0 and target: 1.
+            """
+            
+            # Initialize OpenAI client
+            client = OpenAI()
+            
+            # Call GPT-4 with structured output
+            response = client.chat.completions.create(
+                model="gpt-4-0125-preview",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": f"Generate a JSON pathway structure for: {json.dumps(conversation)}"}
+                ],
+                temperature=0.2,
+                response_format={"type": "json_object"}
+            )
+            
+            # Parse and validate response
+            structured_data = json.loads(response.choices[0].message.content)
+            
+            # Validate required fields
+            required_node_fields = ["name", "type", "prompt", "condition", "modelOptions"]
+            for node in structured_data.get("nodes", []):
+                missing_fields = [field for field in required_node_fields if field not in node]
+                if missing_fields:
+                    raise ValueError(f"Missing required fields in node: {missing_fields}")
+            
+            # Generate node IDs and update nodes
+            nodes = structured_data.get("nodes", [])
+            node_mapping = {}  # Map to store index to ID mapping
+            
+            for idx, node in enumerate(nodes):
+                node_id = str(uuid.uuid4())
+                node["id"] = node_id
+                node_mapping[idx] = node_id
+            
+            # Update edges with actual node IDs using the mapping
+            updated_edges = []
+            for edge in structured_data.get("edges", []):
+                source_idx = edge.get("source")
+                target_idx = edge.get("target")
+                
+                if source_idx is not None and target_idx is not None:
+                    source_id = node_mapping.get(source_idx)
+                    target_id = node_mapping.get(target_idx)
+                    
+                    if source_id and target_id:
+                        updated_edges.append({
+                            "source": source_id,
+                            "target": target_id,
+                            "label": edge.get("label", "Continue")
+                        })
+                    else:
+                        logger.warning(f"Invalid edge indices: source={source_idx}, target={target_idx}")
+            
+            structured_data["edges"] = updated_edges
+            
+            logger.info(f"Successfully generated pathway structure with {len(nodes)} nodes")
+            return structured_data
+            
+        except Exception as e:
+            logger.error(f"Failed to generate structured pathway: {str(e)}")
+            raise 
