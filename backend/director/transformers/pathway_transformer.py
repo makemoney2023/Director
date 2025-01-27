@@ -549,116 +549,80 @@ class PathwayStructureTransformer:
         return nodes
 
     def _generate_structured_pathway(self, outputs: List[Dict]) -> Dict:
-        """
-        Generate structured pathway data using GPT-4
-        
-        Args:
-            outputs: List of generated outputs from database
-            
-        Returns:
-            Dict containing structured pathway data with nodes and edges
-        """
         try:
             logger.info("Starting structured pathway generation")
             
-            # Prepare conversation content
+            # Group outputs by type
             conversation = []
+            voice_prompts = []
             for output in outputs:
                 content = output.get("content", "")
+                
+                # Parse content if it's a string that might be JSON
                 if isinstance(content, str):
                     try:
-                        content = json.loads(content)
+                        parsed_content = json.loads(content)
+                        if isinstance(parsed_content, dict):
+                            content = parsed_content
+                        else:
+                            content = {"text": content}
                     except json.JSONDecodeError:
                         content = {"text": content}
+                
+                # Store voice prompts separately
+                if output.get("output_type") == "voice_prompt":
+                    # Handle both string and dict content
+                    if isinstance(content, dict):
+                        prompt_text = content.get("text", str(content))
+                        prompt_type = content.get("type", "Default")
+                        prompt_condition = content.get("condition", "")
+                    else:
+                        prompt_text = str(content)
+                        prompt_type = "Default"
+                        prompt_condition = ""
+                        
+                    voice_prompts.append({
+                        "id": output.get("id"),
+                        "content": prompt_text,
+                        "type": prompt_type,
+                        "condition": prompt_condition
+                    })
                 conversation.append(content)
             
-            # Create system prompt
-            system_prompt = """
-            Analyze the conversation and generate a structured pathway with nodes and edges.
-            Return the response in JSON format with the following structure:
-            {
-                "nodes": [
-                    {
-                        "name": "descriptive name",
-                        "type": "one of [Default, End Call, Transfer Call, Knowledge Base]",
-                        "prompt": "what the AI should say",
-                        "condition": "when to use this node",
-                        "modelOptions": {
-                            "modelType": "smart",
-                            "temperature": 0.2,
-                            "skipUserResponse": false,
-                            "block_interruptions": false
-                        }
-                    }
-                ],
-                "edges": [
-                    {
-                        "source": 0,  // Use numeric index (0-based) of the source node in the nodes array
-                        "target": 1,  // Use numeric index (0-based) of the target node in the nodes array
-                        "label": "description of the transition"
-                    }
-                ]
+            # Create initial structure with voice prompts
+            nodes = []
+            for idx, prompt in enumerate(voice_prompts):
+                node = {
+                    "name": f"Voice Prompt {idx + 1}",
+                    "type": prompt["type"],
+                    "prompt": prompt["content"],
+                    "condition": prompt["condition"] or "Proceed based on user's response",
+                    "modelOptions": {
+                        "modelType": "smart",
+                        "temperature": 0.2,
+                        "skipUserResponse": False,
+                        "block_interruptions": False
+                    },
+                    "promptId": prompt["id"]
+                }
+                nodes.append(node)
+            
+            # Create edges connecting nodes in sequence
+            edges = []
+            for i in range(len(nodes) - 1):
+                edges.append({
+                    "source": i,
+                    "target": i + 1,
+                    "label": "Continue",
+                    "condition": "User acknowledges or provides relevant response"
+                })
+            
+            structured_data = {
+                "nodes": nodes,
+                "edges": edges
             }
             
-            IMPORTANT: For edges, use numeric indices (0-based) of nodes in the nodes array for source and target.
-            For example, if you want to connect the first node to the second node, use source: 0 and target: 1.
-            """
-            
-            # Initialize OpenAI client
-            client = OpenAI()
-            
-            # Call GPT-4 with structured output
-            response = client.chat.completions.create(
-                model="gpt-4-0125-preview",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": f"Generate a JSON pathway structure for: {json.dumps(conversation)}"}
-                ],
-                temperature=0.2,
-                response_format={"type": "json_object"}
-            )
-            
-            # Parse and validate response
-            structured_data = json.loads(response.choices[0].message.content)
-            
-            # Validate required fields
-            required_node_fields = ["name", "type", "prompt", "condition", "modelOptions"]
-            for node in structured_data.get("nodes", []):
-                missing_fields = [field for field in required_node_fields if field not in node]
-                if missing_fields:
-                    raise ValueError(f"Missing required fields in node: {missing_fields}")
-            
-            # Generate node IDs and update nodes
-            nodes = structured_data.get("nodes", [])
-            node_mapping = {}  # Map to store index to ID mapping
-            
-            for idx, node in enumerate(nodes):
-                node_id = str(uuid.uuid4())
-                node["id"] = node_id
-                node_mapping[idx] = node_id
-            
-            # Update edges with actual node IDs using the mapping
-            updated_edges = []
-            for edge in structured_data.get("edges", []):
-                source_idx = edge.get("source")
-                target_idx = edge.get("target")
-                
-                if source_idx is not None and target_idx is not None:
-                    source_id = node_mapping.get(source_idx)
-                    target_id = node_mapping.get(target_idx)
-                    
-                    if source_id and target_id:
-                        updated_edges.append({
-                            "source": source_id,
-                            "target": target_id,
-                            "label": edge.get("label", "Continue")
-                        })
-                    else:
-                        logger.warning(f"Invalid edge indices: source={source_idx}, target={target_idx}")
-            
-            structured_data["edges"] = updated_edges
-            
-            logger.info(f"Successfully generated pathway structure with {len(nodes)} nodes")
+            logger.info(f"Successfully generated pathway structure with {len(nodes)} nodes and {len(edges)} edges")
             return structured_data
             
         except Exception as e:
