@@ -291,69 +291,33 @@ Example voice prompt format:
             logger.error(f"Error generating analysis prompt: {str(e)}", exc_info=True)
             raise
 
-    def _store_analysis_response(self, content: str, status: str = "success", metadata: Dict = None, 
-                               structured_data: Dict = None, voice_prompt: str = None, 
-                               training_data: List[Dict] = None, few_shot_examples: List[Dict] = None) -> None:
+    def _store_analysis_response(self, video_id: str, collection_id: str, analysis_text: str) -> str:
         """Store analysis response in Supabase"""
         try:
-            # Get video_id and collection_id from session
-            video_id = getattr(self.session, 'video_id', None)
-            collection_id = getattr(self.session, 'collection_id', None)
+            # Store analysis output
+            analysis_id = f"analysis_{video_id}"
+            self.vector_store.store_generated_output(
+                video_id=video_id,
+                collection_id=collection_id,
+                output_type="analysis",
+                content=analysis_text,
+                metadata={
+                    "collection_id": collection_id
+                }
+            )
             
-            if not video_id or not collection_id:
-                raise ValueError("Missing video_id or collection_id in session")
+            # Format next steps
+            next_steps = self._format_next_steps(analysis_id, video_id)
             
-            # Store in Supabase
-            try:
-                # Store analysis text
-                self.vector_store.store_generated_output(
-                    video_id=video_id,
-                    collection_id=collection_id,
-                    output_type="analysis",
-                    content=content
-                )
-                logger.info("Stored analysis text in Supabase")
-                
-                # Store structured data
-                if structured_data:
-                    self.vector_store.store_generated_output(
-                        video_id=video_id,
-                        collection_id=collection_id,
-                        output_type="structured_data",
-                        content=json.dumps(structured_data)
-                    )
-                    logger.info("Stored structured data in Supabase")
-                
-                # Store voice prompt with few-shot examples
-                if voice_prompt:
-                    prompt_with_examples = {
-                        "prompt": voice_prompt,
-                        "few_shot_examples": few_shot_examples
-                    }
-                    self.vector_store.store_generated_output(
-                        video_id=video_id,
-                        collection_id=collection_id,
-                        output_type="voice_prompt",
-                        content=json.dumps(prompt_with_examples)
-                    )
-                    logger.info("Stored voice prompt with few-shot examples in Supabase")
-                
-                # Store training data
-                if training_data:
-                    self.vector_store.store_generated_output(
-                        video_id=video_id,
-                        collection_id=collection_id,
-                        output_type="training_data",
-                        content=json.dumps(training_data)
-                    )
-                    logger.info("Stored training data in Supabase")
-                
-            except Exception as e:
-                logger.error(f"Error storing outputs in Supabase: {str(e)}")
-                raise
-                
+            # Add next steps to text content
+            text_content = self.output_message.content[0]
+            text_content.text += f"\n\n{next_steps}"
+            self.output_message.publish()
+            
+            return analysis_id
+            
         except Exception as e:
-            logger.error(f"Error storing analysis response: {str(e)}", exc_info=True)
+            logger.error(f"Error storing analysis response: {str(e)}")
             raise
 
     def _save_markdown_analysis(self, analysis_content: str, structured_data: Dict, voice_prompt: str, yaml_config: Dict, video_id: str) -> str:
@@ -1664,11 +1628,9 @@ VOICE PROMPT:
             
             # Store results
             self._store_analysis_response(
-                content=analysis_result["analysis"],
-                structured_data=analysis_result["structured_data"],
-                voice_prompt=analysis_result["voice_prompt"],
-                training_data=analysis_result["training_data"],
-                few_shot_examples=analysis_result["few_shot_examples"]
+                video_id=analysis.video_id,
+                collection_id=analysis.collection_id,
+                analysis_text=analysis_result["analysis"]
             )
             
             # Update text content for frontend
@@ -1695,3 +1657,22 @@ VOICE PROMPT:
                 message=f"Error processing analysis: {str(e)}",
                 data={"error": str(e)}
             )
+
+    def _format_next_steps(self, analysis_id: str, video_id: str) -> str:
+        """Format next step commands after analysis completes"""
+        next_steps = (
+            "Analysis complete! Here are your next steps:\n\n"
+            "1. View available pathways:\n"
+            "You can type: '@bland_ai show pathways' or '@bland_ai list'\n\n"
+            "2. Create a knowledge base:\n"
+            "You can type: '@bland_ai create knowledge base' or\n"
+            "@bland_ai create_kb name=\"Sales KB\" description=\"Knowledge base from sales analysis\"\n\n"
+            "3. Store voice prompts:\n" 
+            "You can type: '@bland_ai save prompts' or\n"
+            "@bland_ai store_prompts name=\"Sales Prompts\"\n\n"
+            "4. Update a pathway with the prompts:\n"
+            "You can type something like:\n"
+            "'@bland_ai save prompts to Mark Wilsons'\n\n"
+            "The agent will automatically use the most recent analysis and prompts - no need to specify IDs!"
+        )
+        return next_steps

@@ -110,6 +110,33 @@ CREATE TABLE IF NOT EXISTS generated_outputs (
 )
 """
 
+# SQL to create the pathway_knowledge_bases table
+CREATE_PATHWAY_KB_TABLE = """
+CREATE TABLE IF NOT EXISTS pathway_knowledge_bases (
+    id TEXT PRIMARY KEY,
+    pathway_id TEXT NOT NULL,
+    kb_id TEXT NOT NULL,
+    name TEXT,
+    description TEXT,
+    metadata JSON,
+    created_at INTEGER,
+    UNIQUE(pathway_id, kb_id)
+)
+"""
+
+# SQL to create the knowledge_bases table
+CREATE_KB_TABLE = """
+CREATE TABLE IF NOT EXISTS knowledge_bases (
+    id TEXT PRIMARY KEY,
+    kb_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT,
+    metadata JSON,
+    created_at INTEGER,
+    UNIQUE(kb_id)
+)
+"""
+
 def initialize_sqlite(db_name="director.db"):
     """Initialize the SQLite database by creating the necessary tables."""
     conn = sqlite3.connect(db_name)
@@ -123,6 +150,8 @@ def initialize_sqlite(db_name="director.db"):
     cursor.execute(CREATE_TRANSCRIPTS_TABLE)
     cursor.execute(CREATE_TRANSCRIPT_CHUNKS_TABLE)
     cursor.execute(CREATE_GENERATED_OUTPUTS_TABLE)
+    cursor.execute(CREATE_PATHWAY_KB_TABLE)
+    cursor.execute(CREATE_KB_TABLE)
 
     conn.commit()
     conn.close()

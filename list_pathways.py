@@ -1,0 +1,1 @@
+﻿import requests; headers = {'Authorization': 'Bearer sk-vqlxa51t2rw3av0i45lrke7p6jnfl7ciqm7qy12gh3hngipnbdkhyzrfylpy58f969', 'Content-Type': 'application/json'}; response = requests.get('https://api.bland.ai/v1/pathway', headers=headers); print(response.text)

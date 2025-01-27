@@ -2,7 +2,7 @@
 aiohttp==3.11.11
 anthropic==0.7.7
 composio_openai==0.5.50
-elevenlabs==1.9.0
+elevenlabs==0.2.26
 Flask==3.0.3
 Flask-SocketIO==5.3.6
 Flask-Cors==4.0.1
@@ -10,7 +10,7 @@ openai==1.55.3
 PyJWT==2.10.0
 Pillow==11.0.0
 openai-function-calling==2.3.0
-pydantic==2.8.2
+pydantic==1.10.13
 pydantic-settings==2.4.0
 python-dotenv==1.0.1
 replicate==1.0.1
@@ -21,3 +21,7 @@ tenacity==8.2.3
 supabase==2.3.0
 tiktoken==0.5.2
 numpy==1.26.3
+python-socketio==5.11.1
+python-engineio==4.9.0
+urllib3==2.2.0
+requests==2.31.0

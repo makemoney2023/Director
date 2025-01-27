@@ -41,8 +41,8 @@ class SalesPathwayTransformer:
         nodes["start"] = {
             "id": "start",
             "type": "Default",
+            "name": "Start",
             "data": {
-                "name": "Start",
                 "isStart": True
             }
         }
@@ -57,8 +57,8 @@ class SalesPathwayTransformer:
             nodes[node_id] = {
                 "id": node_id,
                 "type": "Knowledge Base",
+                "name": technique.get("name", "Sales Technique"),
                 "data": {
-                    "name": technique.get("name", "Sales Technique"),
                     "kb_id": kb_id,
                     "kb_section": "sales_techniques",
                     "kb_item_index": idx
@@ -72,9 +72,7 @@ class SalesPathwayTransformer:
                 "id": edge_id,
                 "source": prev_id,
                 "target": node_id,
-                "data": {
-                    "name": "Next Technique"
-                }
+                "name": "Next Technique"
             }
         
         # Create objection handling nodes
@@ -84,8 +82,8 @@ class SalesPathwayTransformer:
             nodes[node_id] = {
                 "id": node_id,
                 "type": "Knowledge Base",
+                "name": f"Handle {objection.get('objection', 'Objection')}",
                 "data": {
-                    "name": f"Handle {objection.get('objection', 'Objection')}",
                     "kb_id": kb_id,
                     "kb_section": "objection_handling",
                     "kb_item_index": idx
@@ -100,18 +98,15 @@ class SalesPathwayTransformer:
                     "id": edge_id,
                     "source": tech_id,
                     "target": node_id,
-                    "data": {
-                        "name": "Handle Objection"
-                    }
+                    "name": "Handle Objection"
                 }
         
         # Create end node
         nodes["end"] = {
             "id": "end",
             "type": "End Call",
-            "data": {
-                "name": "End Call"
-            }
+            "name": "End Call",
+            "data": {}
         }
         
         # Add closing prompt if available
@@ -126,9 +121,7 @@ class SalesPathwayTransformer:
                     "id": edge_id,
                     "source": node_id,
                     "target": "end",
-                    "data": {
-                        "name": "End Call"
-                    }
+                    "name": "End Call"
                 }
         
         return nodes, edges

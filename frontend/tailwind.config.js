@@ -1,5 +1,6 @@
 module.exports = {
   content: ["./src/**/*.{html,js,vue, ts}"],
+  darkMode: 'class',
   options: {
     safelist: [
       "my-auto",
@@ -19,6 +20,10 @@ module.exports = {
       "group-hover:bg-others-doctormanhattan-100",
       "max-h-288",
       "max-h-182",
+      "dark:bg-gray-900",
+      "dark:text-white",
+      "dark:text-gray-100",
+      "dark:border-gray-700"
     ],
   },
   enabled: true,

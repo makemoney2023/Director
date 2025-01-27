@@ -43,9 +43,11 @@ logger = logging.getLogger(__name__)
 class ChatHandler:
     def __init__(self, db, **kwargs):
         self.db = db
+        self.agents = [SalesPromptExtractorAgent, BlandAI_Agent]
+        self.last_active_agent = None  # Track the last active agent
 
         # Register the agents here
-        self.agents = [
+        self.agents += [
             ThumbnailAgent,
             SummarizeVideoAgent,
             DownloadAgent,
@@ -70,8 +72,10 @@ class ChatHandler:
             ComposioAgent,
             ComparisonAgent,
             WebSearchAgent,
-            SalesPromptExtractorAgent,
-            BlandAI_Agent,
+            # ProfanityRemoverAgent,
+            # ImageGenerationAgent,
+            # VideoGenerationAgent,
+            # MemeMakerAgent,
         ]
 
     def add_videodb_state(self, session):
@@ -114,106 +118,159 @@ class ChatHandler:
             # Check if we should bypass reasoning engine
             if input_message.agents and len(input_message.agents) == 1:
                 agent_name = input_message.agents[0]
-                if agent_name == "sales_prompt_extractor":
-                    # Direct agent call for sales_prompt_extractor
-                    agent = agents_mapping["sales_prompt_extractor"]
-                    response = agent.run(
-                        video_id=session.video_id,
-                        collection_id=session.collection_id,
-                        bypass_reasoning=True
+                self.last_active_agent = agent_name  # Store the active agent
+            elif self.last_active_agent and not input_message.agents:
+                # If no agents specified but we have a last active agent, use it
+                message["agents"] = [self.last_active_agent]
+                input_message.agents = [self.last_active_agent]
+                agent_name = self.last_active_agent
+            else:
+                agent_name = None
+
+            if agent_name == "sales_prompt_extractor":
+                # Direct agent call for sales_prompt_extractor
+                agent = agents_mapping["sales_prompt_extractor"]
+                response = agent.run(
+                    video_id=session.video_id,
+                    collection_id=session.collection_id,
+                    bypass_reasoning=True
+                )
+                # Convert AgentResponse to OutputMessage format
+                output_message = {
+                    "status": "success" if response.status == AgentStatus.SUCCESS else "error",
+                    "message": response.message,
+                    "session_id": session.session_id,
+                    "conv_id": session.conv_id,
+                    "msg_type": "output",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": response.data.get("analysis", response.message),
+                            "status": "success" if response.status == AgentStatus.SUCCESS else "error",
+                            "status_message": response.message,
+                            "agent_name": "sales_prompt_extractor",
+                            "structured_data": response.data.get("structured_data", {}),
+                            "voice_prompt": response.data.get("voice_prompt", "")
+                        }
+                    ],
+                    "actions": [],
+                    "agents": ["sales_prompt_extractor"],
+                    "metadata": {
+                        "timestamp": datetime.now().isoformat()
+                    }
+                }
+                return output_message
+            elif agent_name == "bland_ai":
+                # Direct agent call for bland_ai
+                agent = agents_mapping["bland_ai"]
+                # Parse the command from the message text
+                text = message.get("content", [{}])[0].get("text", "").strip()
+                
+                # Handle both direct @bland_ai commands and subsequent commands
+                command = None
+                if text.startswith("@bland_ai"):
+                    # Extract command after @bland_ai
+                    command = text[len("@bland_ai"):].strip()
+                else:
+                    # If no @bland_ai prefix but bland_ai is in agents list,
+                    # treat the entire text as the command
+                    command = text
+
+                # If no command (empty string), show help message
+                if not command:
+                    help_message = (
+                        "Available commands:\n"
+                        "- create_empty name=\"Name\" description=\"Description\": Create a new empty pathway\n"
+                        "- create name=\"Name\" description=\"Description\" analysis_id=\"ID\": Create pathway from analysis\n"
+                        "- update pathway_id=\"ID\" [name=\"Name\"] [description=\"Description\"]: Update pathway\n"
+                        "- get pathway_id=\"ID\": Get pathway details\n"
+                        "- list: List all available pathways\n"
+                        "- add_kb pathway_id=\"ID\" kb_id=\"ID\": Add knowledge base to pathway\n"
+                        "- remove_kb pathway_id=\"ID\" kb_id=\"ID\": Remove knowledge base from pathway"
                     )
-                    # Convert AgentResponse to OutputMessage format
-                    output_message = {
-                        "status": "success" if response.status == AgentStatus.SUCCESS else "error",
-                        "message": response.message,
+                    return {
+                        "status": "success",
+                        "message": "Help information provided",
                         "session_id": session.session_id,
                         "conv_id": session.conv_id,
                         "msg_type": "output",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": response.data.get("analysis", response.message),
-                                "status": "success" if response.status == AgentStatus.SUCCESS else "error",
-                                "status_message": response.message,
-                                "agent_name": "sales_prompt_extractor",
-                                "structured_data": response.data.get("structured_data", {}),
-                                "voice_prompt": response.data.get("voice_prompt", "")
-                            }
-                        ],
+                        "content": [{
+                            "type": "text",
+                            "text": help_message,
+                            "status": "success",
+                            "status_message": "Help information",
+                            "agent_name": "bland_ai"
+                        }],
                         "actions": [],
-                        "agents": ["sales_prompt_extractor"],
+                        "agents": ["bland_ai"],
                         "metadata": {
                             "timestamp": datetime.now().isoformat()
                         }
                     }
-                    return output_message
-                elif agent_name == "bland_ai":
-                    # Direct agent call for bland_ai
-                    agent = agents_mapping["bland_ai"]
-                    # Parse the command from the message text
-                    text = message.get("content", [{}])[0].get("text", "").strip()
-                    if text.startswith("@bland_ai"):
-                        # Extract command and parameters
-                        parts = text[len("@bland_ai"):].strip().split()
-                        if not parts:
-                            # No command provided, return help message
-                            help_message = (
-                                "Available commands:\n"
-                                "- create_empty name=\"Name\" description=\"Description\": Create a new empty pathway\n"
-                                "- create name=\"Name\" description=\"Description\" analysis_id=\"ID\": Create pathway from analysis\n"
-                                "- update pathway_id=\"ID\" [name=\"Name\"] [description=\"Description\"]: Update pathway\n"
-                                "- get pathway_id=\"ID\": Get pathway details\n"
-                                "- list: List all available pathways\n"
-                                "- add_kb pathway_id=\"ID\" kb_id=\"ID\": Add knowledge base to pathway\n"
-                                "- remove_kb pathway_id=\"ID\" kb_id=\"ID\": Remove knowledge base from pathway"
-                            )
-                            return {
+
+                # Parse command and parameters
+                parts = command.split()
+                command = parts[0].lower()  # Convert to lowercase for case-insensitive matching
+                
+                # Handle common typos/variations
+                command_map = {
+                    "lst": "list",
+                    "lis": "list",
+                    "lists": "list",
+                    "create-empty": "create_empty",
+                    "createempty": "create_empty",
+                    "add-kb": "add_kb",
+                    "addkb": "add_kb",
+                    "remove-kb": "remove_kb",
+                    "removekb": "remove_kb"
+                }
+                command = command_map.get(command, command)  # Map common variations to correct command
+                
+                params = {}
+                for part in parts[1:]:
+                    if "=" in part:
+                        key, value = part.split("=", 1)
+                        # Remove quotes if present
+                        value = value.strip('"\'')
+                        params[key] = value
+
+                # Run the agent with parsed parameters
+                response = agent.run(
+                    command=command,
+                    **params
+                )
+                
+                # Convert AgentResponse to OutputMessage format
+                # Ensure content is properly serialized
+                content = []
+                if hasattr(session.output_message, 'content') and session.output_message.content:
+                    for item in session.output_message.content:
+                        if hasattr(item, 'model_dump'):
+                            content.append(item.model_dump())
+                        elif isinstance(item, dict):
+                            content.append(item)
+                        else:
+                            content.append({
+                                "type": "text",
+                                "text": str(item),
                                 "status": "success",
-                                "message": "Help information provided",
-                                "session_id": session.session_id,
-                                "conv_id": session.conv_id,
-                                "msg_type": "output",
-                                "content": [{
-                                    "type": "text",
-                                    "text": help_message,
-                                    "status": "success",
-                                    "status_message": "Help information",
-                                    "agent_name": "bland_ai"
-                                }],
-                                "actions": [],
-                                "agents": ["bland_ai"],
-                                "metadata": {
-                                    "timestamp": datetime.now().isoformat()
-                                }
-                            }
-                        command = parts[0]
-                        params = {}
-                        for part in parts[1:]:
-                            if "=" in part:
-                                key, value = part.split("=", 1)
-                                # Remove quotes if present
-                                value = value.strip('"\'')
-                                params[key] = value
-                        
-                        # Run the agent with parsed parameters
-                        response = agent.run(
-                            command=command,
-                            **params
-                        )
-                        # The response is already an OutputMessage, so we just use it directly
-                        session.output_message = response
-                        session.output_message.status = MsgStatus.success
-                        session.output_message.publish()
-                        return session.output_message.model_dump()
-                else:
-                    # Use reasoning engine for all other cases
-                    res_eng = ReasoningEngine(input_message=input_message, session=session)
-                    if input_message.agents:
-                        for agent_name in input_message.agents:
-                            res_eng.register_agents([agents_mapping[agent_name]])
-                    else:
-                        res_eng.register_agents(agents)
-                    res_eng.run()
+                                "status_message": response.message,
+                                "agent_name": "bland_ai"
+                            })
+                
+                return {
+                    "status": "success" if response.status == AgentStatus.SUCCESS else "error",
+                    "message": response.message,
+                    "session_id": session.session_id,
+                    "conv_id": session.conv_id,
+                    "msg_type": "output",
+                    "content": content,
+                    "actions": session.output_message.actions if hasattr(session.output_message, 'actions') else [],
+                    "agents": ["bland_ai"],
+                    "metadata": {
+                        "timestamp": datetime.now().isoformat()
+                    }
+                }
             else:
                 # Use reasoning engine for all other cases
                 res_eng = ReasoningEngine(input_message=input_message, session=session)

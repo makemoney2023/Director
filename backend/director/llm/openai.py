@@ -37,7 +37,7 @@ class OpenaiConfig(BaseLLMConfig):
     llm_type: str = LLMType.OPENAI
     api_key: str = ""
     api_base: str = "https://api.openai.com/v1"
-    chat_model: str = Field(default=OpenAIChatModel.GPT4o)
+    chat_model: str = Field(default=OpenAIChatModel.GPT4o_MINI)
     max_tokens: int = 8096
 
     @field_validator("api_key")

@@ -38,6 +38,10 @@ class SQLiteDB(BaseDB):
         self.conn.execute('PRAGMA busy_timeout=30000')  # 30 second timeout
         
         self.cursor = self.conn.cursor()
+        
+        # Initialize database tables
+        initialize_sqlite(self.db_path)
+        
         logger.info("Connected to SQLite DB with multi-threading support...")
 
     def create_session(
@@ -615,6 +619,19 @@ class SQLiteDB(BaseDB):
         except Exception as e:
             logger.error(f"Error deleting video: {str(e)}")
             return False
+
+    def execute(self, query: str, params: tuple = None) -> None:
+        """Execute a SQL query with optional parameters.
+        
+        Args:
+            query: SQL query string
+            params: Optional tuple of parameters for the query
+        """
+        if params:
+            self.cursor.execute(query, params)
+        else:
+            self.cursor.execute(query)
+        self.conn.commit()
 
     def __del__(self):
         self.conn.close()

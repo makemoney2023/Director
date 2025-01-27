@@ -1,30 +1,40 @@
 <template>
-  <div class="analysis-display">
+  <div class="analysis-display bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100">
     <!-- Analysis Section -->
     <div v-if="parsedContent.analysis" class="analysis-section">
-      <h3>Analysis</h3>
-      <div class="content-text markdown-content" v-html="parsedContent.analysis"></div>
+      <h3 class="text-xl font-bold dark:text-white">Analysis</h3>
+      <div class="content-text markdown-content dark:text-gray-100" v-html="parsedContent.analysis"></div>
     </div>
     
     <!-- Structured Data Section -->
     <div v-if="hasStructuredData" class="structured-data-section">
-      <h3>Structured Data</h3>
-      <div v-for="(value, key) in parsedContent.structured_data" :key="key" class="structured-data-item">
-        <h4>{{ key }}</h4>
-        <pre class="code-block">{{ JSON.stringify(value, null, 2) }}</pre>
+      <h3 class="text-xl font-bold dark:text-white">Available Pathways</h3>
+      <div v-if="parsedContent.structured_data.pathways" class="pathway-list">
+        <div v-for="pathway in parsedContent.structured_data.pathways" :key="pathway.id" 
+             class="pathway-item dark:bg-gray-800 dark:border-gray-700 p-4 mb-4 rounded-lg border">
+          <h4 class="text-lg font-semibold dark:text-white">{{ pathway.name }}</h4>
+          <div class="text-sm text-gray-600 dark:text-gray-300">
+            <p><strong>ID:</strong> {{ pathway.id }}</p>
+            <p v-if="pathway.description"><strong>Description:</strong> {{ pathway.description }}</p>
+          </div>
+        </div>
+      </div>
+      <div v-else class="structured-data-item dark:bg-gray-800 dark:border-gray-700">
+        <h4 class="text-lg font-semibold dark:text-white">{{ key }}</h4>
+        <pre class="code-block dark:bg-gray-800 dark:text-gray-100">{{ JSON.stringify(value, null, 2) }}</pre>
       </div>
     </div>
     
     <!-- Voice Prompt Section -->
-    <div v-if="parsedContent.voice_prompt && parsedContent.voice_prompt.length > 0" class="voice-prompt-section">
-      <h3>Voice Prompt</h3>
-      <div class="content-text voice-prompt">{{ parsedContent.voice_prompt }}</div>
+    <div v-if="parsedContent.voice_prompt && parsedContent.voice_prompt.length > 0" class="voice-prompt-section dark:bg-gray-800 dark:border-blue-500">
+      <h3 class="text-xl font-bold dark:text-white">Voice Prompt</h3>
+      <div class="content-text voice-prompt dark:text-blue-300">{{ parsedContent.voice_prompt }}</div>
     </div>
 
     <!-- Debug Info (only in development) -->
-    <div v-if="import.meta.env.DEV" class="debug-info">
-      <h4>Debug Info:</h4>
-      <pre>{{ JSON.stringify({
+    <div v-if="import.meta.env.DEV" class="debug-info dark:bg-gray-800 dark:border-gray-700">
+      <h4 class="text-lg font-semibold dark:text-white">Debug Info:</h4>
+      <pre class="dark:bg-gray-800 dark:text-gray-100">{{ JSON.stringify({
         rawContentType: typeof props.content,
         messageType: props.content?.type,
         isSocketMessage: props.content?.msg_type === 'output',
@@ -79,11 +89,11 @@ const normalizeContent = (content) => {
   if (processedContent?.msg_type === 'output' && Array.isArray(processedContent?.content)) {
     const textContent = processedContent.content.find(item => 
       item.type === 'text' && 
-      item.agent_name === 'sales_prompt_extractor'
+      (item.agent_name === 'sales_prompt_extractor' || item.agent_name === 'bland_ai')
     );
     
     if (textContent) {
-      console.log('Found sales_prompt_extractor content:', {
+      console.log(`Found ${textContent.agent_name} content:`, {
         hasText: !!textContent.text,
         hasStructuredData: !!textContent.structured_data,
         hasVoicePrompt: !!textContent.voice_prompt
@@ -149,75 +159,52 @@ const formattedStructuredData = computed(() => {
   margin-bottom: 2rem;
 }
 
-h3 {
-  color: #2c3e50;
-  margin-bottom: 1rem;
-  font-size: 1.5rem;
-}
-
-h4 {
-  color: #34495e;
-  margin: 1rem 0;
-  font-size: 1.2rem;
-  text-transform: capitalize;
-}
-
 .content-text {
   line-height: 1.6;
   white-space: pre-wrap;
 }
 
 .structured-data-item {
-  background: #1e1e1e;
   padding: 1rem;
-  border-radius: 4px;
+  border-radius: 0.5rem;
   margin-bottom: 1rem;
-  border: 1px solid #333;
+  border-width: 1px;
 }
 
 .code-block {
-  background: #1e1e1e;
   padding: 1rem;
-  border-radius: 4px;
+  border-radius: 0.5rem;
   overflow-x: auto;
   font-family: monospace;
-  border: 1px solid #333;
+  white-space: pre-wrap;
 }
 
 .debug-info {
   margin-top: 2rem;
   padding: 1rem;
-  background: #1e1e1e;
-  border: 1px solid #333;
-  border-radius: 4px;
-}
-
-.debug-info pre {
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.markdown-content :deep(p) {
-  margin-bottom: 1rem;
-}
-
-.markdown-content :deep(ul),
-.markdown-content :deep(ol) {
-  margin-left: 1.5rem;
-  margin-bottom: 1rem;
+  border-radius: 0.5rem;
+  border-width: 1px;
 }
 
 .voice-prompt-section {
   margin-bottom: 2rem;
-  background: #e3f2fd;
   padding: 1.5rem;
-  border-radius: 8px;
-  border-left: 4px solid #2196f3;
+  border-radius: 0.5rem;
+  border-left-width: 4px;
 }
 
 .voice-prompt {
   font-style: italic;
-  color: #1565c0;
   line-height: 1.8;
+}
+
+:deep(.markdown-content p) {
+  margin-bottom: 1rem;
+}
+
+:deep(.markdown-content ul),
+:deep(.markdown-content ol) {
+  margin-left: 1.5rem;
+  margin-bottom: 1rem;
 }
 </style> 
