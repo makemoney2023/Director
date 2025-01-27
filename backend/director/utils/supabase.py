@@ -5,6 +5,7 @@ import numpy as np
 from openai import OpenAI
 import tiktoken
 import logging
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -483,16 +484,54 @@ $$;
             logger.error(f"Failed to get latest generated output: {str(e)}")
             return None
 
-    def list_generated_outputs(self, output_type: str = None, limit: int = 5) -> List[Dict[str, Any]]:
+    def list_generated_outputs(self, output_type: str = None, limit: int = 50) -> List[Dict[str, Any]]:
         """List recent generated outputs of a specific type"""
         try:
-            result = self.supabase.table('generated_outputs').select('*').eq('output_type', output_type).order('created_at', desc=True).limit(limit).execute()
-            
-            if not result.data:
+            # Get all videos for the collection
+            video_result = self.supabase.table('videos').select('id').execute()
+            if not video_result.data:
+                logger.warning("No videos found")
                 return []
                 
+            video_ids = [v['id'] for v in video_result.data]
+            
+            # Get outputs for these videos
+            query = self.supabase.table('generated_outputs').select('*')
+            
+            if output_type:
+                query = query.eq('output_type', output_type)
+                
+            if video_ids:
+                query = query.in_('video_id', video_ids)
+                
+            result = query.order('created_at', desc=True).limit(limit).execute()
+            
+            if not result.data:
+                logger.warning(f"No outputs found for type: {output_type}")
+                return []
+                
+            logger.info(f"Found {len(result.data)} outputs")
             return result.data
             
         except Exception as e:
             logger.error(f"Failed to list generated outputs: {str(e)}")
-            return [] 
+            return []
+
+    def store_pathway_output_mapping(self, pathway_id: str, output_ids: List[str]) -> None:
+        """Store mapping between pathway and the outputs used to create it"""
+        try:
+            # Create mapping entries
+            for output_id in output_ids:
+                mapping_data = {
+                    "pathway_id": pathway_id,
+                    "output_id": output_id,
+                    "created_at": datetime.now().isoformat()
+                }
+                self.supabase.table('pathway_output_mappings').insert(mapping_data).execute()
+                
+            logger.info(f"Stored mapping between pathway {pathway_id} and {len(output_ids)} outputs")
+            
+        except Exception as e:
+            logger.error(f"Failed to store pathway output mapping: {str(e)}")
+            # Don't raise - this is not critical to pathway creation
+            pass 

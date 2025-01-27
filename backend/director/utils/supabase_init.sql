@@ -26,6 +26,15 @@ create index if not exists transcript_chunks_embedding_idx
     using ivfflat (embedding vector_cosine_ops)
     with (lists = 100);
 
+-- Create a table for storing pathway output mappings
+create table if not exists pathway_output_mappings (
+    id uuid default gen_random_uuid() primary key,
+    pathway_id text not null,
+    output_id text not null,
+    created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+    unique(pathway_id, output_id)
+);
+
 -- Function to match similar chunks
 create or replace function match_chunks(
     query_embedding vector(1536),

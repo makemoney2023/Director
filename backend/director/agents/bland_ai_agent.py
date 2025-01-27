@@ -6,11 +6,13 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime
 import logging
 import json
+import requests
 
 from director.core.session import Session, MsgStatus, TextContent, OutputMessage, MsgType
 from director.agents.base import BaseAgent, AgentResponse, AgentStatus
 from director.integrations.bland_ai.handler import BlandAIIntegrationHandler
 from director.integrations.bland_ai.transformer import SalesPathwayTransformer
+from director.transformers.pathway_transformer import PathwayStructureTransformer
 from director.core.config import Config
 from director.db import load_db
 from director.constants import DBType
@@ -35,11 +37,12 @@ class BlandAI_Agent(BaseAgent):
         self.config = Config()
         self.bland_ai_service = BlandAIService(self.config)
         self.transformer = SalesPathwayTransformer()
+        self.pathway_transformer = PathwayStructureTransformer()
         self.kb_tool = KnowledgeBaseTool(self.config)
         self.db = load_db(DBType.SQLITE)
         self.vector_store = SupabaseVectorStore()
         self.collection_id = "c-07af6c2f-73f8-4033-9d77-bbd9b21d3111"
-        self.llm = get_default_llm()  # Add LLM initialization
+        self.llm = get_default_llm()
         
     @property
     def name(self) -> str:
@@ -62,7 +65,8 @@ class BlandAI_Agent(BaseAgent):
                         "remove_kb",
                         "create_kb",
                         "store_prompts",
-                        "update_with_kb"
+                        "update_with_kb",
+                        "analyze_and_create"
                     ],
                     "description": "Command to execute"
                 },
@@ -96,44 +100,34 @@ class BlandAI_Agent(BaseAgent):
             "description": "Manages Bland AI conversation pathways. Common uses:\n- List pathways: command='list'\n- Save prompts: command='store_prompts' name='Mark Wilsons'\n- Create knowledge base: command='create_kb' name='Sales KB'\n- Update pathway: command='update_with_kb' pathway_id='...'"
         }
 
-    def _get_latest_analysis(self) -> tuple[str, str]:
-        """Get the most recent analysis ID and data from Supabase"""
+    def _get_analysis_data(self, analysis_id: str) -> str:
+        """Get analysis data from Supabase"""
         try:
-            # Query latest analysis from generated_outputs
-            query = """
-                SELECT video_id, content, created_at 
-                FROM generated_outputs 
-                WHERE output_type = 'analysis'
-                ORDER BY created_at DESC 
-                LIMIT 1
-            """
-            result = self.vector_store.execute_query(query)
-            if not result:
-                raise ValueError("No recent analysis found")
+            # Get analysis data from Supabase
+            analysis = self.vector_store.get_latest_generated_output(output_type="analysis")
+            if not analysis:
+                raise ValueError(f"No analysis data found")
                 
-            video_id = result[0]['video_id']
-            analysis_id = f"analysis_{video_id}"
-            return analysis_id, str(result[0]['content'])
+            # Clean and validate the text
+            analysis_text = str(analysis.get("content", ""))
+            if analysis_text.lower() == 'none' or not analysis_text.strip():
+                raise ValueError("Empty or invalid analysis text")
+                
+            return analysis_text
             
         except Exception as e:
-            logger.error(f"Failed to get latest analysis: {str(e)}")
+            logger.error(f"Failed to get analysis data: {str(e)}")
             raise
 
     def _get_latest_prompts(self) -> List[str]:
         """Get the most recently stored voice prompts"""
         try:
-            # Query latest prompts from bland_ai_prompts
-            query = """
-                SELECT prompt_id 
-                FROM bland_ai_prompts
-                ORDER BY created_at DESC 
-                LIMIT 10
-            """
-            result = self.vector_store.execute_query(query)
-            if not result:
+            # Get latest prompts using Supabase
+            prompts = self.vector_store.list_generated_outputs(output_type="voice_prompt", limit=10)
+            if not prompts:
                 raise ValueError("No recent prompts found")
                 
-            return [r['prompt_id'] for r in result]
+            return [p["id"] for p in prompts if p.get("id")]
             
         except Exception as e:
             logger.error(f"Failed to get latest prompts: {str(e)}")
@@ -240,7 +234,7 @@ Only return valid JSON, no other text."""
                 )
                 
             # Get latest analysis and prompts if not provided
-            if command in ["create_kb", "store_prompts"] and "analysis_id" not in kwargs:
+            if command in ["create_kb", "store_prompts", "analyze_and_create"] and "analysis_id" not in kwargs:
                 latest_output = self.vector_store.get_latest_generated_output(output_type="analysis")
                 if latest_output:
                     kwargs["analysis_id"] = latest_output["id"]
@@ -251,43 +245,13 @@ Only return valid JSON, no other text."""
                     kwargs["prompt_ids"] = [p["id"] for p in latest_prompts]
                     
             # Handle commands
-            if command == "list":
-                try:
-                    pathways = self.bland_ai_service.list_pathways()
-                    pathways_text = self._list_pathways()
-                    
-                    text_content = TextContent(
-                        text=pathways_text,
-                        status=MsgStatus.success,
-                        status_message="Here are the available pathways",
-                        agent_name=self.agent_name,
-                        structured_data={
-                            "pathways": pathways,
-                            "metadata": {
-                                "count": len(pathways),
-                                "timestamp": str(datetime.now().isoformat())
-                            }
-                        }
-                    )
-                    
-                    self.output_message.add_content(text_content)
-                    self.output_message.push_update()
-                    
-                    return AgentResponse(
-                        status=AgentStatus.SUCCESS,
-                        message="Successfully retrieved pathways",
-                        content=[text_content.to_dict()],
-                        data={
-                            "pathways": pathways,
-                            "formatted_text": pathways_text
-                        }
-                    )
-                except Exception as e:
-                    logger.error(f"Error listing pathways: {str(e)}")
-                    return AgentResponse(
-                        status=AgentStatus.ERROR,
-                        message=f"Error listing pathways: {str(e)}"
-                    )
+            if command == "analyze_and_create":
+                result = self._analyze_and_create_pathway(
+                    name=kwargs.get("name", "Generated Pathway"),
+                    description=kwargs.get("description", "Automatically generated from analysis")
+                )
+            elif command == "list":
+                result = self._list_pathways()
             elif command == "get":
                 result = self._get_pathway(kwargs.get("pathway_id"))
             elif command == "create_empty":
@@ -325,38 +289,6 @@ Only return valid JSON, no other text."""
                 status=AgentStatus.ERROR,
                 message=f"Error executing command: {str(e)}"
             )
-
-    def _get_analysis_data(self, analysis_id: str) -> str:
-        """Get analysis data from Supabase"""
-        try:
-            # Extract video ID from analysis ID - handle both prefixed and unprefixed cases
-            video_id = analysis_id
-            if video_id.startswith('analysis_'):
-                video_id = video_id[len('analysis_'):]  # Remove 'analysis_' prefix if present
-            
-            logger.info(f"Retrieving analysis data for video ID: {video_id}")
-            
-            # Get analysis data from Supabase
-            analysis_data = self.vector_store.get_generated_output(video_id, self.collection_id, "analysis")
-            
-            if not analysis_data:
-                # List all generated outputs for debugging
-                logger.info("Listing all generated outputs for debugging:")
-                outputs = self.vector_store.list_generated_outputs(video_id, self.collection_id)
-                for output in outputs:
-                    logger.info(f"Found output: type={output['output_type']}, created_at={output['created_at']}")
-                raise ValueError(f"No analysis data found for video ID {video_id}")
-                
-            # Clean and validate the text
-            analysis_text = str(analysis_data)
-            if analysis_text.lower() == 'none' or not analysis_text.strip():
-                raise ValueError(f"Empty or invalid analysis text for video ID {video_id}")
-                
-            return analysis_text
-            
-        except Exception as e:
-            logger.error(f"Failed to get analysis data: {str(e)}")
-            raise
 
     def _list_pathways(self) -> str:
         try:
@@ -670,3 +602,135 @@ Only return valid JSON, no other text."""
             return f"Updated pathway {pathway_id} with prompts"
         except Exception as e:
             return f"Failed to update pathway with prompts: {str(e)}"
+
+    def _analyze_and_create_pathway(self, name: str, description: str) -> str:
+        """
+        Create a pathway structure from voice prompts in generated outputs
+        """
+        try:
+            logger.info("Starting pathway creation from voice prompts")
+            
+            # Get all voice prompts directly
+            query = self.vector_store.supabase.from_('generated_outputs')\
+                .select('*')\
+                .eq('output_type', 'voice_prompt')\
+                .order('created_at', desc=True)\
+                .limit(50)
+                
+            result = query.execute()
+            outputs = result.data
+            
+            if not outputs:
+                logger.error("No voice prompts found in the database")
+                raise ValueError("No voice prompts found in the database")
+                
+            logger.info(f"Found {len(outputs)} voice prompts")
+            
+            # Transform voice prompts into pathway structure
+            pathway_structure = self.pathway_transformer.transform_from_outputs(outputs)
+            
+            # Convert nodes and edges to lists if they're dictionaries
+            nodes = list(pathway_structure["nodes"].values()) if isinstance(pathway_structure["nodes"], dict) else pathway_structure["nodes"]
+            edges = list(pathway_structure["edges"].values()) if isinstance(pathway_structure["edges"], dict) else pathway_structure["edges"]
+            
+            # Ensure each node has required fields
+            for node in nodes:
+                if "data" not in node:
+                    node["data"] = {}
+                if "name" not in node["data"]:
+                    node["data"]["name"] = "Default Node"
+                if "type" not in node:
+                    node["type"] = "Default"
+                
+            # Ensure each edge has required fields
+            for edge in edges:
+                if "data" not in edge:
+                    edge["data"] = {}
+                if "name" not in edge["data"]:
+                    edge["data"]["name"] = "Default Edge"
+            
+            # Step 1: Create empty pathway first
+            pathway = self.bland_ai_service.create_pathway(
+                name=name,
+                description=description
+            )
+            
+            pathway_id = pathway.get('pathway_id')
+            if not pathway_id:
+                raise ValueError(f"No pathway_id in create response: {pathway}")
+                
+            # Step 2: Update pathway with nodes and edges
+            update_url = f"{self.bland_ai_service.base_api_url}/pathway/{pathway_id}"
+            update_payload = {
+                "name": name,
+                "description": description,
+                "nodes": nodes,
+                "edges": edges
+            }
+            
+            logger.info(f"Updating pathway {pathway_id} with structure")
+            logger.info(f"Update payload nodes: {json.dumps(nodes[:2], indent=2)}")  # Log first 2 nodes as example
+            logger.info(f"Update payload edges: {json.dumps(edges[:2], indent=2)}")  # Log first 2 edges as example
+            
+            update_response = requests.post(
+                update_url,
+                headers=self.bland_ai_service.headers,
+                json=update_payload
+            )
+            
+            if not update_response.ok:
+                logger.error(f"Update failed with status {update_response.status_code}: {update_response.text}")
+                update_response.raise_for_status()
+            
+            logger.info(f"Bland AI update pathway response: {update_response.text}")
+            
+            # Store mapping between pathway and outputs
+            try:
+                self._store_pathway_output_mapping(pathway_id, outputs)
+            except Exception as e:
+                logger.error(f"Failed to store pathway output mapping: {str(e)}")
+                # Don't raise - this is not critical to pathway creation
+                
+            # Return formatted string response
+            return (
+                f"Successfully created pathway:\n"
+                f"Name: {name}\n"
+                f"Description: {description}\n"
+                f"Pathway ID: {pathway_id}\n"
+                f"Nodes: {len(nodes)}\n"
+                f"Edges: {len(edges)}"
+            )
+            
+        except Exception as e:
+            logger.error(f"Failed to analyze and create pathway: {str(e)}")
+            raise
+            
+    def _store_pathway_output_mapping(self, pathway_id: str, outputs: List[Dict]):
+        """Store mapping between pathway and the outputs used to create it"""
+        try:
+            # Extract output IDs
+            output_ids = []
+            for output in outputs:
+                output_id = output.get("id")
+                if output_id:
+                    # Remove any prefix if present
+                    if "_" in output_id:
+                        output_id = output_id.split("_")[-1]
+                    output_ids.append(output_id)
+            
+            if not output_ids:
+                logger.warning("No valid output IDs found for mapping")
+                return
+                
+            # Store mapping in database
+            self.vector_store.store_pathway_output_mapping(
+                pathway_id=pathway_id,
+                output_ids=output_ids
+            )
+            
+            logger.info(f"Stored mapping between pathway {pathway_id} and {len(output_ids)} outputs")
+            
+        except Exception as e:
+            logger.error(f"Failed to store pathway output mapping: {str(e)}")
+            # Don't raise - this is not critical to pathway creation
+            pass
