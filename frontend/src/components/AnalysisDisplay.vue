@@ -3,7 +3,7 @@
     <!-- Analysis Section -->
     <div v-if="parsedContent.analysis" class="analysis-section">
       <h3 class="text-xl font-bold dark:text-white">Analysis</h3>
-      <div class="content-text markdown-content dark:text-gray-100" v-html="parsedContent.analysis"></div>
+      <div class="content-text markdown-content dark:text-gray-100 bg-white dark:bg-gray-900" v-html="parsedContent.analysis"></div>
     </div>
     
     <!-- Structured Data Section -->
@@ -11,7 +11,7 @@
       <h3 class="text-xl font-bold dark:text-white">Available Pathways</h3>
       <div v-if="parsedContent.structured_data.pathways" class="pathway-list">
         <div v-for="pathway in parsedContent.structured_data.pathways" :key="pathway.id" 
-             class="pathway-item dark:bg-gray-800 dark:border-gray-700 p-4 mb-4 rounded-lg border">
+             class="pathway-item bg-white dark:bg-gray-800 dark:border-gray-700 p-4 mb-4 rounded-lg border">
           <h4 class="text-lg font-semibold dark:text-white">{{ pathway.name }}</h4>
           <div class="text-sm text-gray-600 dark:text-gray-300">
             <p><strong>ID:</strong> {{ pathway.id }}</p>
@@ -19,37 +19,16 @@
           </div>
         </div>
       </div>
-      <div v-else class="structured-data-item dark:bg-gray-800 dark:border-gray-700">
+      <div v-else class="structured-data-item bg-white dark:bg-gray-800 dark:border-gray-700">
         <h4 class="text-lg font-semibold dark:text-white">{{ key }}</h4>
-        <pre class="code-block dark:bg-gray-800 dark:text-gray-100">{{ JSON.stringify(value, null, 2) }}</pre>
+        <pre class="code-block bg-gray-100 dark:bg-gray-800 dark:text-gray-100">{{ JSON.stringify(value, null, 2) }}</pre>
       </div>
     </div>
     
     <!-- Voice Prompt Section -->
-    <div v-if="parsedContent.voice_prompt && parsedContent.voice_prompt.length > 0" class="voice-prompt-section dark:bg-gray-800 dark:border-blue-500">
+    <div v-if="parsedContent.voice_prompt && parsedContent.voice_prompt.length > 0" class="voice-prompt-section bg-white dark:bg-gray-800 dark:border-blue-500">
       <h3 class="text-xl font-bold dark:text-white">Voice Prompt</h3>
       <div class="content-text voice-prompt dark:text-blue-300">{{ parsedContent.voice_prompt }}</div>
-    </div>
-
-    <!-- Debug Info (only in development) -->
-    <div v-if="import.meta.env.DEV" class="debug-info dark:bg-gray-800 dark:border-gray-700">
-      <h4 class="text-lg font-semibold dark:text-white">Debug Info:</h4>
-      <pre class="dark:bg-gray-800 dark:text-gray-100">{{ JSON.stringify({
-        rawContentType: typeof props.content,
-        messageType: props.content?.type,
-        isSocketMessage: props.content?.msg_type === 'output',
-        isAnalysisResults: props.content?.type === 'analysis_results',
-        hasContent: !!props.content?.content,
-        contentLength: props.content?.content?.length,
-        hasAnalysis: !!parsedContent.analysis,
-        analysisLength: parsedContent.analysis?.length || 0,
-        hasStructuredData,
-        structuredDataKeys: hasStructuredData ? Object.keys(parsedContent.structured_data) : [],
-        hasVoicePrompt: !!parsedContent.voice_prompt,
-        voicePromptLength: parsedContent.voice_prompt?.length || 0,
-        rawContent: props.content,
-        normalizedContent: parsedContent
-      }, null, 2) }}</pre>
     </div>
   </div>
 </template>
@@ -136,16 +115,6 @@ const hasStructuredData = computed(() => {
   return parsedContent.value.structured_data !== null && 
          Object.keys(parsedContent.value.structured_data || {}).length > 0;
 });
-
-const formattedStructuredData = computed(() => {
-  try {
-    if (!hasStructuredData.value) return '';
-    return JSON.stringify(parsedContent.value.structured_data, null, 2);
-  } catch (e) {
-    console.error('Error formatting structured data:', e);
-    return '';
-  }
-});
 </script>
 
 <style scoped>
@@ -164,6 +133,64 @@ const formattedStructuredData = computed(() => {
   white-space: pre-wrap;
 }
 
+/* Override markdown-body styles for dark mode */
+:deep(.markdown-body) {
+  @apply bg-transparent;
+  color: inherit;
+}
+
+:deep(.markdown-body pre),
+:deep(.markdown-body code),
+:deep(.language-markdown),
+:deep(.language-json),
+:deep(code[class*="language-"]),
+:deep(pre[class*="language-"]) {
+  @apply bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100 !important;
+  padding: 1rem;
+  border-radius: 0.375rem;
+  margin: 1rem 0;
+}
+
+:deep(.markdown-content pre),
+:deep(.markdown-content code) {
+  @apply bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100 !important;
+  padding: 1rem;
+  border-radius: 0.375rem;
+  margin: 1rem 0;
+}
+
+:deep(pre),
+:deep(code) {
+  @apply bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100 !important;
+}
+
+/* Ensure code blocks inside sections also follow dark mode */
+:deep(.content-text pre),
+:deep(.content-text code) {
+  @apply bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100 !important;
+}
+
+/* Target specific sections */
+:deep(#analysis pre),
+:deep(#structured-data pre),
+:deep(#voice-prompt pre) {
+  @apply bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100 !important;
+}
+
+/* Base text color for content */
+:deep(.content-text) {
+  @apply text-gray-900 dark:text-gray-100;
+}
+
+:deep(.markdown-content p) {
+  @apply mb-4;
+}
+
+:deep(.markdown-content ul),
+:deep(.markdown-content ol) {
+  @apply pl-6 mb-4;
+}
+
 .structured-data-item {
   padding: 1rem;
   border-radius: 0.5rem;
@@ -177,6 +204,7 @@ const formattedStructuredData = computed(() => {
   overflow-x: auto;
   font-family: monospace;
   white-space: pre-wrap;
+  @apply bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100;
 }
 
 .debug-info {
@@ -184,6 +212,7 @@ const formattedStructuredData = computed(() => {
   padding: 1rem;
   border-radius: 0.5rem;
   border-width: 1px;
+  @apply bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100;
 }
 
 .voice-prompt-section {
@@ -196,15 +225,5 @@ const formattedStructuredData = computed(() => {
 .voice-prompt {
   font-style: italic;
   line-height: 1.8;
-}
-
-:deep(.markdown-content p) {
-  margin-bottom: 1rem;
-}
-
-:deep(.markdown-content ul),
-:deep(.markdown-content ol) {
-  margin-left: 1.5rem;
-  margin-bottom: 1rem;
 }
 </style> 

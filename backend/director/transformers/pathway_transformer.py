@@ -572,10 +572,21 @@ class PathwayStructureTransformer:
         try:
             logger.info("Starting structured pathway generation")
             
+            if not outputs:
+                logger.error("No outputs provided to generate pathway")
+                raise ValueError("No outputs provided to generate pathway")
+            
             # Group outputs and generate nodes with names first
             nodes = []
             for output in outputs:
-                content = output.get("content", "")
+                if not isinstance(output, dict):
+                    logger.warning(f"Skipping invalid output format: {type(output)}")
+                    continue
+                    
+                content = output.get("content")
+                if content is None:
+                    logger.warning(f"Skipping output with no content: {output.get('id')}")
+                    continue
                 
                 # Parse content if it's a string that might be JSON
                 if isinstance(content, str):
@@ -587,75 +598,71 @@ class PathwayStructureTransformer:
                             content = {"text": content}
                     except json.JSONDecodeError:
                         content = {"text": content}
+                elif not isinstance(content, dict):
+                    content = {"text": str(content)}
                 
                 if output.get("output_type") == "voice_prompt":
+                    # Extract prompt text safely
+                    prompt_text = content.get("text")
+                    if not prompt_text and isinstance(content, dict):
+                        prompt_text = str(content)
+                    elif not prompt_text:
+                        prompt_text = "Default prompt text"
+                    
                     # Generate descriptive name using GPT-4-mini
-                    prompt_text = content.get("text", str(content))
-                    node_name = self._generate_node_name_from_prompt(prompt_text)
+                    try:
+                        node_name = self._generate_node_name_from_prompt(prompt_text)
+                    except Exception as e:
+                        logger.error(f"Error generating node name: {str(e)}")
+                        node_name = f"Node {len(nodes) + 1}"
+                    
+                    # Create default model options
+                    model_options = {
+                        "modelType": "smart",
+                        "temperature": 0.2,
+                        "skipUserResponse": False,
+                        "blockInterruptions": False
+                    }
+                    
+                    # Update with any provided options
+                    if isinstance(content.get("modelOptions"), dict):
+                        model_options.update(content["modelOptions"])
                     
                     node = {
                         "name": node_name,
                         "type": content.get("type", "Default"),
                         "prompt": prompt_text,
                         "condition": content.get("condition", "Proceed based on user's response"),
-                        "modelOptions": {
-                            "modelType": "smart",
-                            "temperature": 0.2,
-                            "skipUserResponse": False,
-                            "block_interruptions": False
-                        },
+                        "modelOptions": model_options,
                         "promptId": output.get("id")
                     }
                     nodes.append(node)
             
-            # Use GPT-4-mini to analyze node names and determine structure
-            client = OpenAI()
-            node_names = [node["name"] for node in nodes]
+            if not nodes:
+                logger.error("No valid nodes could be generated from outputs")
+                raise ValueError("No valid nodes could be generated from outputs")
             
-            system_prompt = """Analyze these conversation node names and determine:
-1. The logical order they should appear in a sales conversation
-2. Which nodes should be connected by edges
-3. What conditions should trigger each edge
-
-Format the response as JSON with:
-{
-    "node_order": [list of indices showing order],
-    "edges": [
-        {
-            "source": index,
-            "target": index,
-            "condition": "condition for this transition",
-            "label": "short label for the edge"
-        }
-    ]
-}
-
-Consider conversation flow best practices and ensure a logical progression."""
-
-            response = client.chat.completions.create(
-                model="gpt-4-0125-preview",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": f"Node names: {json.dumps(node_names)}"}
-                ],
-                temperature=0.2,
-                response_format={"type": "json_object"}
-            )
-            
-            structure = json.loads(response.choices[0].message.content)
-            
-            # Reorder nodes based on LLM suggestion
-            ordered_nodes = [nodes[i] for i in structure["node_order"]]
-            
-            # Create edges based on LLM suggestion
-            edges = structure["edges"]
-            
-            logger.info(f"Successfully generated pathway structure with {len(ordered_nodes)} nodes and {len(edges)} edges")
-            return {
-                "nodes": ordered_nodes,
-                "edges": edges
+            # Create a simple sequential structure
+            structured_data = {
+                "nodes": nodes,
+                "edges": []
             }
             
+            # Create edges connecting nodes sequentially
+            for i in range(len(nodes) - 1):
+                edge = {
+                    "source": nodes[i]["name"],
+                    "target": nodes[i + 1]["name"],
+                    "condition": "Continue",
+                    "data": {
+                        "label": "Continue",
+                        "description": "Continue with the conversation flow"
+                    }
+                }
+                structured_data["edges"].append(edge)
+            
+            return structured_data
+                
         except Exception as e:
-            logger.error(f"Failed to generate structured pathway: {str(e)}")
-            raise 
+            logger.error(f"Error generating structured pathway: {str(e)}")
+            raise
