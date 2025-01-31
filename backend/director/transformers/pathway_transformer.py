@@ -64,29 +64,35 @@ class PathwayStructureTransformer:
             # Generate structured pathway using GPT-4
             structured_data = self._generate_structured_pathway(outputs)
             
-            # Convert structured data to Bland AI format
+            # Initialize node collections
             nodes = {}
             edges = {}
             
-            # Process nodes first and store their IDs
-            node_ids = []
-            for idx, node in enumerate(structured_data["nodes"]):
-                position = self._calculate_position(idx // 3, idx % 3)  # Arrange nodes in a grid
+            # 1. Create and add start node
+            start_node = self._create_start_node(
+                prompt_id=outputs[0].get("id") if outputs else None,
+                prompt_text=outputs[0].get("content") if outputs else None
+            )
+            nodes[start_node["id"]] = start_node
+            
+            # 2. Process main conversation nodes
+            main_nodes = []
+            for idx, node in enumerate(structured_data.get("nodes", [])):
+                position = self._calculate_position(idx // 3 + 1, idx % 3)
                 
                 node_data = {
-                    "name": node["name"],
+                    "name": node.get("name", f"Node {idx}"),
                     "active": False,
-                    "prompt": node["prompt"],
-                    "condition": node["condition"],
+                    "prompt": node.get("prompt", "Continue the conversation."),
+                    "condition": node.get("condition", "Proceed based on user's response."),
                     "globalPrompt": self._get_global_prompt(),
-                    "modelOptions": node["modelOptions"]
+                    "modelOptions": node.get("modelOptions", ModelOptions().to_dict())
                 }
                 
-                node_id = node.get("id") or str(uuid.uuid4())
-                node_ids.append(node_id)
-                nodes[node_id] = {
+                node_id = str(uuid.uuid4())
+                main_nodes.append({
                     "id": node_id,
-                    "type": node["type"],
+                    "type": node.get("type", NodeType.DEFAULT.value),
                     "data": node_data,
                     "width": self.node_width,
                     "height": self.node_height,
@@ -94,54 +100,91 @@ class PathwayStructureTransformer:
                     "dragging": False,
                     "selected": False,
                     "positionAbsolute": position
-                }
+                })
             
-            # Process edges using the stored node IDs
-            for edge in structured_data.get("edges", []):
-                source_idx = edge.get("source")
-                target_idx = edge.get("target")
+            # Add main nodes to nodes dict
+            for node in main_nodes:
+                nodes[node["id"]] = node
+            
+            # 3. Create and add end nodes
+            end_nodes = self._create_end_nodes()
+            for node in end_nodes:
+                nodes[node["id"]] = node
+            
+            # 4. Create global handlers
+            global_nodes = self._create_global_nodes()
+            for node in global_nodes:
+                nodes[node["id"]] = node
+            
+            # 5. Generate edges
+            # Connect start to first main nodes
+            if main_nodes:
+                for idx, target in enumerate(main_nodes[:2]):  # Connect to first 2 main nodes
+                    edge_id = f"reactflow__edge-{start_node['id']}-{target['id']}"
+                    edges[edge_id] = {
+                        "id": edge_id,
+                        "source": start_node["id"],
+                        "target": target["id"],
+                        "type": "custom",
+                        "animated": True,
+                        "data": {
+                            "label": "Start Conversation",
+                            "description": "Begin the conversation flow",
+                            "condition": "User willing to engage"
+                        },
+                        "selected": False,
+                        "sourceHandle": None,
+                        "targetHandle": None
+                    }
+            
+            # Connect main nodes to each other and end nodes
+            for idx, source in enumerate(main_nodes):
+                # Connect to next main nodes
+                for target in main_nodes[idx + 1:idx + 3]:  # Connect to next 2 nodes
+                    edge_id = f"reactflow__edge-{source['id']}-{target['id']}"
+                    edges[edge_id] = {
+                        "id": edge_id,
+                        "source": source["id"],
+                        "target": target["id"],
+                        "type": "custom",
+                        "animated": True,
+                        "data": self._generate_edge_metadata(source, target),
+                        "selected": False,
+                        "sourceHandle": None,
+                        "targetHandle": None
+                    }
                 
-                if isinstance(source_idx, int) and isinstance(target_idx, int):
-                    if 0 <= source_idx < len(node_ids) and 0 <= target_idx < len(node_ids):
-                        source_id = node_ids[source_idx]
-                        target_id = node_ids[target_idx]
-                        
-                        edge_id = f"reactflow__edge-{source_id}-{target_id}"
+                # Connect to appropriate end nodes based on node type
+                for end_node in end_nodes:
+                    if self._should_connect_to_end_node(source, end_node):
+                        edge_id = f"reactflow__edge-{source['id']}-{end_node['id']}"
                         edges[edge_id] = {
                             "id": edge_id,
-                            "source": source_id,
-                            "target": target_id,
+                            "source": source["id"],
+                            "target": end_node["id"],
                             "type": "custom",
                             "animated": True,
-                            "data": {
-                                "label": edge.get("label", "Continue"),
-                                "description": edge.get("description", "Continue with the conversation flow")
-                            },
+                            "data": self._generate_edge_metadata(source, end_node),
                             "selected": False,
                             "sourceHandle": None,
                             "targetHandle": None
                         }
             
-            # Add global nodes
-            global_nodes = self._create_global_nodes()
-            for node in global_nodes:
-                node_id = node["id"]
-                nodes[node_id] = node
-                
-                # Connect global nodes to transfer nodes
-                if node["data"].get("isGlobal"):
-                    transfer_nodes = [n for n in nodes.values() if n["type"] == NodeType.TRANSFER_CALL.value]
-                    for target in transfer_nodes:
-                        edge_id = f"reactflow__edge-{node_id}-{target['id']}"
+            # Connect global nodes to transfer nodes
+            for global_node in global_nodes:
+                for end_node in end_nodes:
+                    if end_node["type"] == NodeType.TRANSFER_CALL.value:
+                        edge_id = f"reactflow__edge-{global_node['id']}-{end_node['id']}"
                         edges[edge_id] = {
                             "id": edge_id,
-                            "source": node_id,
-                            "target": target["id"],
+                            "source": global_node["id"],
+                            "target": end_node["id"],
                             "type": "custom",
                             "animated": True,
                             "data": {
-                                "label": "Transfer to human",
-                                "description": "Transfer the call to a human assistant."
+                                "label": "Transfer to Human",
+                                "description": "Transfer to human assistant for help",
+                                "condition": "Issue requires human intervention"
                             },
                             "selected": False,
                             "sourceHandle": None,
@@ -229,6 +272,7 @@ class PathwayStructureTransformer:
         """Create the initial greeting node with full data structure"""
         position = self._calculate_position(0, 0)
         
+        # Enhanced start node with better structure
         node_data = {
             "name": "Start",
             "active": False,
@@ -236,14 +280,19 @@ class PathwayStructureTransformer:
             "isStart": True,
             "condition": "Condition fails if the user immediately refuses to talk or asks to be removed from the call list.",
             "globalPrompt": self._get_global_prompt(),
-            "modelOptions": ModelOptions().to_dict()
+            "modelOptions": ModelOptions(
+                model_type="smart",
+                temperature=0.2,
+                skip_user_response=False,
+                block_interruptions=False
+            ).to_dict()
         }
         
         if prompt_id:
             node_data["promptId"] = prompt_id
         
         return {
-            "id": "1",
+            "id": "start",  # Consistent ID for start node
             "type": NodeType.DEFAULT.value,
             "data": node_data,
             "width": self.node_width,
@@ -307,30 +356,33 @@ class PathwayStructureTransformer:
         return nodes
         
     def _create_edges(self, nodes: List[Dict]) -> List[Dict]:
-        """Create edges between nodes in sequence with proper data structure"""
+        """Create edges between nodes with enhanced metadata"""
         edges = []
         
-        # Connect nodes in sequence
-        for i in range(len(nodes) - 1):
-            source_node = nodes[i]
-            target_node = nodes[i+1]
-            
-            edge = {
-                "id": f"reactflow__edge-{source_node['id']}-{target_node['id']}",
-                "source": source_node["id"],
-                "target": target_node["id"],
-                "type": "custom",
-                "animated": True,
-                "data": {
-                    "label": self._generate_edge_label(source_node, target_node),
-                    "description": self._generate_edge_description(source_node, target_node)
-                },
-                "selected": False,
-                "sourceHandle": None,
-                "targetHandle": None
-            }
-            edges.append(edge)
-            
+        for i, source_node in enumerate(nodes[:-1]):
+            for target_node in nodes[i+1:]:
+                # Skip invalid connections
+                if target_node["data"].get("isStart"):
+                    continue
+                    
+                edge_id = f"reactflow__edge-{source_node['id']}-{target_node['id']}"
+                
+                # Generate meaningful edge metadata
+                edge_data = self._generate_edge_metadata(source_node, target_node)
+                
+                edge = {
+                    "id": edge_id,
+                    "source": source_node["id"],
+                    "target": target_node["id"],
+                    "type": "custom",
+                    "animated": True,
+                    "data": edge_data,
+                    "selected": False,
+                    "sourceHandle": None,
+                    "targetHandle": None
+                }
+                edges.append(edge)
+        
         return edges
         
     def _calculate_position(self, level: int, index: int) -> Dict[str, int]:
@@ -472,24 +524,31 @@ class PathwayStructureTransformer:
                 
         return valid_targets
         
-    def _generate_edge_label(self, source_node: Dict, target_node: Dict) -> str:
-        """Generate appropriate label for edge"""
-        if target_node["type"] == NodeType.TRANSFER_CALL.value:
-            return "Transfer needed"
-        elif target_node["type"] == NodeType.END_CALL.value:
-            return "End conversation"
-        else:
-            return "Continue"
+    def _generate_edge_metadata(self, source_node: Dict, target_node: Dict) -> Dict:
+        """Generate descriptive metadata for edges"""
+        
+        # Handle special cases first
+        if target_node["type"] == NodeType.END_CALL.value:
+            return {
+                "label": "End Conversation",
+                "description": "Conclude the conversation appropriately",
+                "condition": "User ready to end conversation"
+            }
             
-    def _generate_edge_description(self, source_node: Dict, target_node: Dict) -> str:
-        """Generate detailed description for edge transition"""
         if target_node["type"] == NodeType.TRANSFER_CALL.value:
-            return "User needs to be transferred to a human agent"
-        elif target_node["type"] == NodeType.END_CALL.value:
-            return "Conversation can be concluded"
-        else:
-            return "Continue with the next step in the conversation flow"
+            return {
+                "label": "Transfer to Human",
+                "description": "Transfer call to human assistant",
+                "condition": "Issue requires human intervention"
+            }
             
+        # Default progression
+        return {
+            "label": "Continue",
+            "description": "Progress to next conversation step",
+            "condition": "User engaged and conversation flowing"
+        }
+        
     def _validate_pathway_structure(self, nodes: List[Dict], edges: List[Dict]) -> None:
         """Validate the pathway structure meets Bland AI requirements"""
         # Check for required node fields
@@ -666,3 +725,91 @@ class PathwayStructureTransformer:
         except Exception as e:
             logger.error(f"Error generating structured pathway: {str(e)}")
             raise
+
+    def _create_end_nodes(self) -> List[Dict]:
+        """Create standard end nodes for different scenarios"""
+        end_nodes = []
+        
+        # Successful completion end node
+        success_node = {
+            "id": "end_success",
+            "type": NodeType.END_CALL.value,
+            "data": {
+                "name": "Successful Completion",
+                "active": False,
+                "prompt": "Thank you for your time and participation. We've successfully completed our conversation. Have a great day!",
+                "condition": "Use when conversation reaches successful conclusion",
+                "globalPrompt": self._get_global_prompt(),
+                "modelOptions": ModelOptions().to_dict()
+            },
+            "position": self._calculate_position(self.current_level + 1, 0),
+            "width": self.node_width,
+            "height": self.node_height,
+            "dragging": False,
+            "selected": False
+        }
+        end_nodes.append(success_node)
+        
+        # Polite ending for rejections
+        rejection_node = {
+            "id": "end_rejection",
+            "type": NodeType.END_CALL.value,
+            "data": {
+                "name": "Polite Ending",
+                "active": False,
+                "prompt": "I understand this isn't what you're looking for right now. Thank you for your time, and have a great day!",
+                "condition": "Use when user clearly indicates they're not interested",
+                "globalPrompt": self._get_global_prompt(),
+                "modelOptions": ModelOptions().to_dict()
+            },
+            "position": self._calculate_position(self.current_level + 1, 1),
+            "width": self.node_width,
+            "height": self.node_height,
+            "dragging": False,
+            "selected": False
+        }
+        end_nodes.append(rejection_node)
+        
+        # Transfer to human end node
+        transfer_node = {
+            "id": "end_transfer",
+            "type": NodeType.TRANSFER_CALL.value,
+            "data": {
+                "name": "Transfer to Human",
+                "active": False,
+                "prompt": "I'll transfer you to a human assistant who can better help with your needs. Please hold while I connect you.",
+                "condition": "Use when issue requires human intervention",
+                "globalPrompt": self._get_global_prompt(),
+                "modelOptions": ModelOptions().to_dict(),
+                "transferNumber": "+1234567890"  # Should be configured per implementation
+            },
+            "position": self._calculate_position(self.current_level + 1, 2),
+            "width": self.node_width,
+            "height": self.node_height,
+            "dragging": False,
+            "selected": False
+        }
+        end_nodes.append(transfer_node)
+        
+        return end_nodes
+
+    def _should_connect_to_end_node(self, source_node: Dict, end_node: Dict) -> bool:
+        """Determine if source node should connect to given end node"""
+        source_type = source_node.get("type")
+        end_type = end_node.get("type")
+        
+        # All nodes can potentially end in transfer
+        if end_type == NodeType.TRANSFER_CALL.value:
+            return True
+            
+        # Only certain nodes should connect to success/rejection ends
+        if end_type == NodeType.END_CALL.value:
+            # Connect if source is a decision point or final node
+            if "final" in source_node["data"].get("name", "").lower():
+                return True
+            if "decision" in source_node["data"].get("name", "").lower():
+                return True
+            if "booking" in source_node["data"].get("name", "").lower():
+                return True
+                
+        return False
