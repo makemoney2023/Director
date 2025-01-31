@@ -88,59 +88,57 @@ class BlandAIService:
         else:
             self._handle_error_response(response)
 
-    def create_pathway(self, name: str, description: str, nodes: Optional[Dict] = None, edges: Optional[Dict] = None) -> Dict:
-        """
-        Create a new pathway in Bland AI using a two-step process:
-        1. Create pathway with name and description
-        2. Update pathway with nodes and edges if provided
-        
-        Args:
-            name: Name of the pathway
-            description: Description of the pathway
-            nodes: Dictionary of nodes keyed by ID (optional)
-            edges: Dictionary of edges keyed by ID (optional)
-            
-        Returns:
-            Dict containing pathway details and ID
-        """
+    def create_pathway(self, pathway_data: Dict) -> Dict:
+        """Create a new pathway in Bland AI"""
         try:
-            # Step 1: Create pathway with name and description
-            url = f"{self.base_api_url}/convo_pathway/create"
-            payload = {
+            # Extract required fields
+            name = pathway_data.get("name")
+            description = pathway_data.get("description")
+            nodes = pathway_data.get("nodes", {})
+            edges = pathway_data.get("edges", {})
+            
+            if not name or not description:
+                raise ValueError("Name and description are required")
+            
+            # Step 1: Create empty pathway first
+            create_response = requests.post(
+                f"{self.base_api_url}/convo_pathway/create",
+                headers=self.headers,
+                json={
+                    "name": name,
+                    "description": description
+                }
+            )
+            create_response.raise_for_status()
+            pathway = create_response.json()
+            
+            pathway_id = pathway.get("pathway_id")
+            if not pathway_id:
+                raise ValueError(f"No pathway_id in create response: {pathway}")
+            
+            # Step 2: Update pathway with nodes and edges
+            update_url = f"{self.base_api_url}/convo_pathway/{pathway_id}"
+            update_payload = {
                 "name": name,
-                "description": description
+                "description": description,
+                "nodes": list(nodes.values()) if isinstance(nodes, dict) else nodes,
+                "edges": list(edges.values()) if isinstance(edges, dict) else edges
             }
             
-            response = requests.post(url, headers=self.headers, json=payload)
-            response.raise_for_status()
+            logger.info(f"Updating pathway {pathway_id} with structure")
+            logger.debug(f"Update payload: {json.dumps(update_payload)}")
             
-            logger.info(f"Bland AI create pathway response: {response.text}")
+            update_response = requests.post(
+                update_url,
+                headers=self.headers,
+                json=update_payload
+            )
+            update_response.raise_for_status()
             
-            pathway_data = response.json()
-            pathway_id = pathway_data.get("pathway_id")
+            return update_response.json()
             
-            if not pathway_id:
-                raise ValueError("No pathway_id returned from create endpoint")
-                
-            # Step 2: Update pathway with nodes and edges if provided
-            if nodes is not None and edges is not None:
-                update_url = f"{self.base_api_url}/convo_pathway/{pathway_id}"
-                update_payload = {
-                    "nodes": nodes,
-                    "edges": edges
-                }
-                
-                logger.info(f"Updating pathway {pathway_id} with structure")
-                update_response = requests.post(update_url, headers=self.headers, json=update_payload)
-                update_response.raise_for_status()
-                
-                logger.info(f"Bland AI update pathway response: {update_response.text}")
-                return update_response.json()
-            
-            return pathway_data
-            
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Failed to create/update pathway: {str(e)}")
+        except Exception as e:
+            logger.error(f"Failed to create pathway: {str(e)}")
             raise
 
     def update_pathway(self, pathway_id: str, updates: Dict) -> Dict:

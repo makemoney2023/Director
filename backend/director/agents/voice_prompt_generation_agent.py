@@ -89,24 +89,28 @@ Your core competencies include:
 4. Adaptive response strategy design
 
 Your responsibility is to generate voice prompts that are:
-- Contextually aware
-- Emotionally intelligent
-- Naturally adaptive
-- Style-consistent
+- Contextually aware and situation-specific
+- Emotionally intelligent and empathetic
+- Naturally adaptive to conversation flow
+- Style-consistent throughout interactions
+
+IMPORTANT: Generate prompts that directly instruct the AI on how to handle the specific situation.
+DO NOT use generic greetings or introductions like "Hello!" or "I am an AI assistant."
+Instead, start with clear, actionable guidance for the specific context.
 
 Your output must be in the following JSON format:
 {
     "prompt": {
-        "content": "The actual voice prompt content",
+        "content": "Direct situational guidance without greetings (e.g., 'When the customer expresses interest in pricing, acknowledge their focus on value and explain how our solution provides long-term cost benefits. Maintain a confident yet consultative tone.')",
         "tone_guidance": {
-            "pitch": "Specific pitch guidance",
-            "rate": "Speech rate guidance",
-            "energy": "Energy level guidance"
+            "pitch": "Specific pitch guidance for this situation",
+            "rate": "Context-appropriate speech rate",
+            "energy": "Situation-specific energy level"
         },
         "adaptation_rules": {
-            "context_triggers": ["List of specific situations that trigger adaptations"],
-            "response_patterns": ["Patterns for different response types"],
-            "transitions": ["Natural transition phrases"]
+            "context_triggers": ["Specific situations requiring adaptation"],
+            "response_patterns": ["Contextual response patterns"],
+            "transitions": ["Natural transition phrases for this scenario"]
         }
     },
     "metadata": {
@@ -125,7 +129,7 @@ Your output must be in the following JSON format:
         # Process context analysis
         context_analysis = self._analyze_context(context)
         
-        user_prompt = f"""Generate a {style} voice prompt based on the following analysis and configuration:
+        user_prompt = f"""Generate a {style} voice prompt for this specific situation based on the following analysis and configuration:
 
 ANALYSIS INSIGHTS:
 {json.dumps(analysis_insights, indent=2)}
@@ -137,13 +141,13 @@ CONTEXT ANALYSIS:
 {json.dumps(context_analysis, indent=2)}
 
 Requirements:
-1. Maintain {style} style characteristics
-2. Incorporate analysis insights naturally
-3. Follow tone and pacing guidelines
-4. Include adaptation triggers
-5. Enable flexible responses
+1. Start with direct, actionable guidance (NO greetings or introductions)
+2. Focus on the specific situation and context
+3. Provide clear behavioral and tonal guidance
+4. Include specific adaptation triggers for this scenario
+5. Enable contextually appropriate responses
 
-The prompt should feel natural while maintaining professional standards and incorporating the analyzed patterns."""
+The prompt must be specific to the situation while maintaining professional standards and incorporating the analyzed patterns."""
 
         return [
             {"role": "system", "content": system_prompt},

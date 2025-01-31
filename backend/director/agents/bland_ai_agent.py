@@ -12,7 +12,7 @@ from director.core.session import Session, MsgStatus, TextContent, OutputMessage
 from director.agents.base import BaseAgent, AgentResponse, AgentStatus
 from director.integrations.bland_ai.handler import BlandAIIntegrationHandler
 from director.integrations.bland_ai.transformer import SalesPathwayTransformer
-from director.transformers.pathway_transformer import PathwayStructureTransformer
+from director.transformers.pathway_transformer import PathwayTransformer
 from director.core.config import Config
 from director.db import load_db
 from director.constants import DBType
@@ -26,7 +26,7 @@ from director.llm.base import LLMResponseStatus
 logger = logging.getLogger(__name__)
 
 class BlandAI_Agent(BaseAgent):
-    """Agent for managing Bland AI pathways through chat"""
+    """Agent for managing Bland AI conversation pathways through chat"""
     
     def __init__(self, session: Session, **kwargs):
         self.agent_name = "bland_ai"
@@ -37,13 +37,18 @@ class BlandAI_Agent(BaseAgent):
         self.config = Config()
         self.bland_ai_service = BlandAIService(self.config)
         self.transformer = SalesPathwayTransformer()
-        self.pathway_transformer = PathwayStructureTransformer()
+        self.pathway_transformer = PathwayTransformer()
         self.kb_tool = KnowledgeBaseTool(self.config)
         self.db = load_db(DBType.SQLITE)
         self.vector_store = SupabaseVectorStore()
         self.collection_id = "c-07af6c2f-73f8-4033-9d77-bbd9b21d3111"
         self.llm = get_default_llm()
         
+        # Initialize storage for current pathway
+        self.nodes = {}
+        self.edges = {}
+        self.current_pathway_id = None
+
     @property
     def name(self) -> str:
         return self.agent_name
@@ -249,6 +254,12 @@ Only return valid JSON, no other text."""
                 result = self._analyze_and_create_pathway(
                     name=kwargs.get("name", "Generated Pathway"),
                     description=kwargs.get("description", "Automatically generated from analysis")
+                )
+                # Convert dictionary result to proper AgentResponse format
+                return AgentResponse(
+                    status=AgentStatus.SUCCESS,
+                    message=result.get("message", "Successfully created pathway"),
+                    data=result.get("data", {})
                 )
             elif command == "list":
                 result = self._list_pathways()
@@ -603,108 +614,131 @@ Only return valid JSON, no other text."""
         except Exception as e:
             return f"Failed to update pathway with prompts: {str(e)}"
 
-    def _analyze_and_create_pathway(self, name: str, description: str) -> str:
-        """
-        Create a pathway structure from voice prompts in generated outputs
-        """
+    def update_pathway_storage(self, transformation_result):
+        """Update internal storage with new pathway data"""
+        self.nodes = transformation_result.nodes
+        self.edges = transformation_result.edges
+
+    def _analyze_and_create_pathway(self, name: str, description: str) -> Dict:
+        """Analyze outputs and create a new pathway"""
         try:
-            logger.info("Starting pathway creation from voice prompts")
-            
-            # Get all voice prompts directly
-            query = self.vector_store.supabase.from_('generated_outputs')\
-                .select('*')\
-                .eq('output_type', 'voice_prompt')\
-                .order('created_at', desc=True)\
-                .limit(50)
-                
-            result = query.execute()
-            outputs = result.data
-            
+            # Get outputs from Supabase
+            outputs = self.vector_store.list_generated_outputs(output_type="voice_prompt")
             if not outputs:
-                logger.error("No voice prompts found in the database")
-                raise ValueError("No voice prompts found in the database")
-                
-            logger.info(f"Found {len(outputs)} voice prompts")
+                raise DirectorException("No voice prompts found in the database")
             
-            # Transform voice prompts into pathway structure
-            pathway_structure = self.pathway_transformer.transform_from_outputs(outputs)
+            # Transform outputs into pathway structure
+            transformation_result = self.pathway_transformer.transform_from_outputs(outputs)
             
-            # Convert nodes and edges to lists if they're dictionaries
-            nodes = list(pathway_structure["nodes"].values()) if isinstance(pathway_structure["nodes"], dict) else pathway_structure["nodes"]
-            edges = list(pathway_structure["edges"].values()) if isinstance(pathway_structure["edges"], dict) else pathway_structure["edges"]
+            # Check for validation errors
+            if transformation_result.errors:
+                error_messages = [f"{error.error_type}: {error.message}" for error in transformation_result.errors]
+                raise DirectorException(f"Pathway validation failed: {'; '.join(error_messages)}")
             
-            # Ensure each node has required fields
-            for node in nodes:
-                if "data" not in node:
-                    node["data"] = {}
-                if "name" not in node["data"]:
-                    node["data"]["name"] = "Default Node"
-                if "type" not in node:
-                    node["type"] = "Default"
-                
-            # Ensure each edge has required fields
-            for edge in edges:
-                if "data" not in edge:
-                    edge["data"] = {}
-                if "name" not in edge["data"]:
-                    edge["data"]["name"] = "Default Edge"
-            
-            # Step 1: Create empty pathway first
-            pathway = self.bland_ai_service.create_pathway(
-                name=name,
-                description=description
-            )
-            
-            pathway_id = pathway.get('pathway_id')
-            if not pathway_id:
-                raise ValueError(f"No pathway_id in create response: {pathway}")
-                
-            # Step 2: Update pathway with nodes and edges
-            update_url = f"{self.bland_ai_service.base_api_url}/pathway/{pathway_id}"
-            update_payload = {
+            # Create pathway in Bland AI
+            pathway_data = {
                 "name": name,
                 "description": description,
-                "nodes": nodes,
-                "edges": edges
+                "nodes": transformation_result.nodes,
+                "edges": transformation_result.edges
             }
             
-            logger.info(f"Updating pathway {pathway_id} with structure")
-            logger.info(f"Update payload nodes: {json.dumps(nodes[:2], indent=2)}")  # Log first 2 nodes as example
-            logger.info(f"Update payload edges: {json.dumps(edges[:2], indent=2)}")  # Log first 2 edges as example
+            response = self.bland_ai_service.create_pathway(pathway_data)
             
-            update_response = requests.post(
-                update_url,
-                headers=self.bland_ai_service.headers,
-                json=update_payload
-            )
+            # Format success message
+            pathway_id = response.get("pathway_id", "unknown")
+            node_count = len(transformation_result.nodes)
+            edge_count = len(transformation_result.edges)
             
-            if not update_response.ok:
-                logger.error(f"Update failed with status {update_response.status_code}: {update_response.text}")
-                update_response.raise_for_status()
-            
-            logger.info(f"Bland AI update pathway response: {update_response.text}")
-            
-            # Store mapping between pathway and outputs
-            try:
-                self._store_pathway_output_mapping(pathway_id, outputs)
-            except Exception as e:
-                logger.error(f"Failed to store pathway output mapping: {str(e)}")
-                # Don't raise - this is not critical to pathway creation
-                
-            # Return formatted string response
-            return (
-                f"Successfully created pathway:\n"
-                f"Name: {name}\n"
-                f"Description: {description}\n"
-                f"Pathway ID: {pathway_id}\n"
-                f"Nodes: {len(nodes)}\n"
-                f"Edges: {len(edges)}"
-            )
+            return {
+                "status": "success",
+                "message": f"Successfully created pathway '{name}' (ID: {pathway_id}) with {node_count} nodes and {edge_count} edges",
+                "data": response
+            }
             
         except Exception as e:
             logger.error(f"Failed to analyze and create pathway: {str(e)}")
-            raise
+            raise DirectorException(str(e))
+
+    def update_node(self, node_id: str, updates: Dict) -> Optional[Dict]:
+        """Update a node in the current pathway"""
+        try:
+            if not self.current_pathway_id:
+                raise DirectorException("No active pathway")
+                
+            updated_node = self.pathway_transformer.update_node(node_id, updates)
+            if updated_node:
+                # Update Bland AI
+                response = self.bland_ai_service.update_node(
+                    self.current_pathway_id,
+                    node_id,
+                    updated_node
+                )
+                return response
+            return None
             
+        except Exception as e:
+            logger.error(f"Failed to update node: {str(e)}")
+            return None
+
+    def delete_node(self, node_id: str) -> bool:
+        """Delete a node from the current pathway"""
+        try:
+            if not self.current_pathway_id:
+                raise DirectorException("No active pathway")
+                
+            if self.pathway_transformer.delete_node(node_id):
+                # Update Bland AI
+                response = self.bland_ai_service.delete_node(
+                    self.current_pathway_id,
+                    node_id
+                )
+                return response.get("success", False)
+            return False
+            
+        except Exception as e:
+            logger.error(f"Failed to delete node: {str(e)}")
+            return False
+
+    def add_edge(self, source_id: str, target_id: str) -> Optional[Dict]:
+        """Add an edge to the current pathway"""
+        try:
+            if not self.current_pathway_id:
+                raise DirectorException("No active pathway")
+                
+            new_edge = self.pathway_transformer.add_edge(source_id, target_id)
+            if new_edge:
+                # Update Bland AI
+                response = self.bland_ai_service.add_edge(
+                    self.current_pathway_id,
+                    new_edge
+                )
+                return response
+            return None
+            
+        except Exception as e:
+            logger.error(f"Failed to add edge: {str(e)}")
+            return None
+
+    def delete_edge(self, edge_id: str) -> bool:
+        """Delete an edge from the current pathway"""
+        try:
+            if not self.current_pathway_id:
+                raise DirectorException("No active pathway")
+                
+            if self.pathway_transformer.delete_edge(edge_id):
+                # Update Bland AI
+                response = self.bland_ai_service.delete_edge(
+                    self.current_pathway_id,
+                    edge_id
+                )
+                return response.get("success", False)
+            return False
+            
+        except Exception as e:
+            logger.error(f"Failed to delete edge: {str(e)}")
+            return False
+
     def _store_pathway_output_mapping(self, pathway_id: str, outputs: List[Dict]):
         """Store mapping between pathway and the outputs used to create it"""
         try:

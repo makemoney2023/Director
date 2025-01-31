@@ -6,16 +6,14 @@ from enum import Enum
 from dataclasses import dataclass
 import json
 from openai import OpenAI  # Updated import
+import os
+
+from .node_generator import NodeGenerator, NodeType
+from .edge_manager import EdgeManager
+from .position_manager import PositionManager, LayoutConfig
+from .pathway_validator import PathwayValidator, ValidationError
 
 logger = logging.getLogger(__name__)
-
-class NodeType(Enum):
-    DEFAULT = "Default"
-    END_CALL = "End Call"
-    TRANSFER_CALL = "Transfer Call"
-    KNOWLEDGE_BASE = "Knowledge Base"
-    WEBHOOK = "Webhook"
-    GLOBAL = "Global"
 
 @dataclass
 class Position:
@@ -37,18 +35,27 @@ class ModelOptions:
             "block_interruptions": self.block_interruptions
         }
 
-class PathwayStructureTransformer:
-    """Transforms generated outputs into Bland AI pathway structure"""
-    
-    def __init__(self):
-        self.node_width = 320
-        self.node_height = 127
-        self.horizontal_spacing = 400
-        self.vertical_spacing = 200
-        self.current_level = 0
-        self.nodes_by_level: Dict[int, List[dict]] = {}
-        
-    def transform_from_outputs(self, outputs: List[Dict]) -> Dict:
+@dataclass
+class TransformationResult:
+    """Result of pathway transformation"""
+    nodes: Dict[str, Dict]
+    edges: Dict[str, Dict]
+    errors: List[ValidationError]
+    warnings: List[str]
+
+class PathwayTransformer:
+    """
+    Main transformer class that orchestrates the conversion of outputs into
+    a structured conversation pathway using specialized components
+    """
+
+    def __init__(self, layout_config: Optional[LayoutConfig] = None):
+        self.node_generator = NodeGenerator()
+        self.edge_manager = EdgeManager()
+        self.position_manager = PositionManager(layout_config)
+        self.validator = PathwayValidator()
+
+    def transform_from_outputs(self, outputs: List[Dict]) -> TransformationResult:
         """
         Main transformation method to convert outputs to pathway structure
         
@@ -56,159 +63,58 @@ class PathwayStructureTransformer:
             outputs: List of generated outputs from database
             
         Returns:
-            Dict containing nodes and edges in Bland AI format
+            TransformationResult containing nodes, edges, and any validation issues
         """
         try:
             logger.info(f"Starting transformation of {len(outputs)} outputs")
             
-            # Generate structured pathway using GPT-4
-            structured_data = self._generate_structured_pathway(outputs)
-            
-            # Initialize node collections
+            # Initialize result containers
             nodes = {}
             edges = {}
+            warnings = []
             
-            # 1. Create and add start node
-            start_node = self._create_start_node(
-                prompt_id=outputs[0].get("id") if outputs else None,
-                prompt_text=outputs[0].get("content") if outputs else None
-            )
-            nodes[start_node["id"]] = start_node
+            # 1. Process and group outputs
+            grouped_outputs = self._group_outputs(outputs)
             
-            # 2. Process main conversation nodes
-            main_nodes = []
-            for idx, node in enumerate(structured_data.get("nodes", [])):
-                position = self._calculate_position(idx // 3 + 1, idx % 3)
-                
-                node_data = {
-                    "name": node.get("name", f"Node {idx}"),
-                    "active": False,
-                    "prompt": node.get("prompt", "Continue the conversation."),
-                    "condition": node.get("condition", "Proceed based on user's response."),
-                    "globalPrompt": self._get_global_prompt(),
-                    "modelOptions": node.get("modelOptions", ModelOptions().to_dict())
-                }
-                
-                node_id = str(uuid.uuid4())
-                main_nodes.append({
-                    "id": node_id,
-                    "type": node.get("type", NodeType.DEFAULT.value),
-                    "data": node_data,
-                    "width": self.node_width,
-                    "height": self.node_height,
-                    "position": position,
-                    "dragging": False,
-                    "selected": False,
-                    "positionAbsolute": position
-                })
+            # 2. Generate nodes
+            node_list = self._generate_nodes(grouped_outputs)
             
-            # Add main nodes to nodes dict
-            for node in main_nodes:
+            # 3. Position nodes
+            positioned_nodes = self.position_manager.layout_nodes(node_list)
+            
+            # 4. Create edges
+            edge_list = self.edge_manager.create_edges_for_nodes(positioned_nodes)
+            
+            # 5. Validate pathway
+            validation_errors = self.validator.validate_pathway(positioned_nodes, edge_list)
+            
+            # 6. Convert to final format
+            for node in positioned_nodes:
                 nodes[node["id"]] = node
             
-            # 3. Create and add end nodes
-            end_nodes = self._create_end_nodes()
-            for node in end_nodes:
-                nodes[node["id"]] = node
+            for edge in edge_list:
+                edges[edge["id"]] = edge
             
-            # 4. Create global handlers
-            global_nodes = self._create_global_nodes()
-            for node in global_nodes:
-                nodes[node["id"]] = node
-            
-            # 5. Generate edges
-            # Connect start to first main nodes
-            if main_nodes:
-                for idx, target in enumerate(main_nodes[:2]):  # Connect to first 2 main nodes
-                    edge_id = f"reactflow__edge-{start_node['id']}-{target['id']}"
-                    edges[edge_id] = {
-                        "id": edge_id,
-                        "source": start_node["id"],
-                        "target": target["id"],
-                        "type": "custom",
-                        "animated": True,
-                        "data": {
-                            "label": "Start Conversation",
-                            "description": "Begin the conversation flow",
-                            "condition": "User willing to engage"
-                        },
-                        "selected": False,
-                        "sourceHandle": None,
-                        "targetHandle": None
-                    }
-            
-            # Connect main nodes to each other and end nodes
-            for idx, source in enumerate(main_nodes):
-                # Connect to next main nodes
-                for target in main_nodes[idx + 1:idx + 3]:  # Connect to next 2 nodes
-                    edge_id = f"reactflow__edge-{source['id']}-{target['id']}"
-                    edges[edge_id] = {
-                        "id": edge_id,
-                        "source": source["id"],
-                        "target": target["id"],
-                        "type": "custom",
-                        "animated": True,
-                        "data": self._generate_edge_metadata(source, target),
-                        "selected": False,
-                        "sourceHandle": None,
-                        "targetHandle": None
-                    }
-                
-                # Connect to appropriate end nodes based on node type
-                for end_node in end_nodes:
-                    if self._should_connect_to_end_node(source, end_node):
-                        edge_id = f"reactflow__edge-{source['id']}-{end_node['id']}"
-                        edges[edge_id] = {
-                            "id": edge_id,
-                            "source": source["id"],
-                            "target": end_node["id"],
-                            "type": "custom",
-                            "animated": True,
-                            "data": self._generate_edge_metadata(source, end_node),
-                            "selected": False,
-                            "sourceHandle": None,
-                            "targetHandle": None
-                        }
-            
-            # Connect global nodes to transfer nodes
-            for global_node in global_nodes:
-                for end_node in end_nodes:
-                    if end_node["type"] == NodeType.TRANSFER_CALL.value:
-                        edge_id = f"reactflow__edge-{global_node['id']}-{end_node['id']}"
-                        edges[edge_id] = {
-                            "id": edge_id,
-                            "source": global_node["id"],
-                            "target": end_node["id"],
-                            "type": "custom",
-                            "animated": True,
-                            "data": {
-                                "label": "Transfer to Human",
-                                "description": "Transfer to human assistant for help",
-                                "condition": "Issue requires human intervention"
-                            },
-                            "selected": False,
-                            "sourceHandle": None,
-                            "targetHandle": None
-                        }
-            
-            # Validate final structure
-            self._validate_pathway_structure(list(nodes.values()), list(edges.values()))
-            
+            # Log completion
             logger.info(f"Successfully created pathway with {len(nodes)} nodes and {len(edges)} edges")
             
-            return {
-                "nodes": nodes,
-                "edges": edges
-            }
+            return TransformationResult(
+                nodes=nodes,
+                edges=edges,
+                errors=validation_errors,
+                warnings=warnings
+            )
             
         except Exception as e:
             logger.error(f"Failed to transform outputs: {str(e)}")
             raise
             
-    def _group_and_analyze_outputs(self, outputs: List[Dict]) -> Dict:
+    def _group_outputs(self, outputs: List[Dict]) -> Dict:
         """Group outputs by type and analyze their relationships"""
         grouped = {
-            "voice_prompts": []
+            "voice_prompts": [],
+            "global_handlers": [],
+            "end_nodes": []
         }
         
         for output in outputs:
@@ -220,26 +126,17 @@ class PathwayStructureTransformer:
                 continue
                 
             try:
-                # Create a new dictionary for the parsed content
-                parsed_content = {}
-                
-                # Handle both JSON and plain text content
-                if isinstance(content, str):
-                    try:
-                        # Try to parse as JSON first
-                        parsed_content = json.loads(content)
-                    except json.JSONDecodeError:
-                        # If not JSON, treat as plain text
-                        parsed_content = {
-                            "prompt": content,
-                            "type": "voice_prompt"
-                        }
-                else:
-                    parsed_content = dict(content)  # Create a copy of the content
-                    
-                # Add output ID to content
+                # Parse content
+                parsed_content = self._parse_content(content)
                 parsed_content["output_id"] = output_id
-                grouped["voice_prompts"].append(parsed_content)
+                
+                # Categorize output
+                if parsed_content.get("isGlobal"):
+                    grouped["global_handlers"].append(parsed_content)
+                elif parsed_content.get("type") in [NodeType.END_CALL.value, NodeType.TRANSFER_CALL.value]:
+                    grouped["end_nodes"].append(parsed_content)
+                else:
+                    grouped["voice_prompts"].append(parsed_content)
                     
             except Exception as e:
                 logger.warning(f"Failed to parse content for output {output_id}: {str(e)}")
@@ -247,385 +144,225 @@ class PathwayStructureTransformer:
                 
         return grouped
         
-    def _create_all_nodes(self, grouped_outputs: Dict, prompt_ids: List[str] = None) -> List[Dict]:
-        """Create all nodes with proper structure and positioning"""
-        nodes = []
-        
-        # Start with greeting node using first voice prompt if available
-        voice_prompts = grouped_outputs["voice_prompts"]
-        start_prompt = voice_prompts[0] if voice_prompts else None
-        start_node = self._create_start_node(
-            prompt_id=start_prompt.get("output_id") if start_prompt else None,
-            prompt_text=start_prompt.get("prompt") if start_prompt else None
-        )
-        nodes.append(start_node)
-        self.current_level += 1
-        
-        # Create nodes for remaining voice prompts
-        if len(voice_prompts) > 1:
-            prompt_nodes = self._create_prompt_nodes(voice_prompts[1:])
-            nodes.extend(prompt_nodes)
-        
-        return nodes
-        
-    def _create_start_node(self, prompt_id: str = None, prompt_text: str = None) -> Dict:
-        """Create the initial greeting node with full data structure"""
-        position = self._calculate_position(0, 0)
-        
-        # Enhanced start node with better structure
-        node_data = {
-            "name": "Start",
-            "active": False,
-            "prompt": prompt_text or "Introduce yourself and establish the purpose of the call. Ask if they have a moment to talk.",
-            "isStart": True,
-            "condition": "Condition fails if the user immediately refuses to talk or asks to be removed from the call list.",
-            "globalPrompt": self._get_global_prompt(),
-            "modelOptions": ModelOptions(
-                model_type="smart",
-                temperature=0.2,
-                skip_user_response=False,
-                block_interruptions=False
-            ).to_dict()
-        }
-        
-        if prompt_id:
-            node_data["promptId"] = prompt_id
-        
-        return {
-            "id": "start",  # Consistent ID for start node
-            "type": NodeType.DEFAULT.value,
-            "data": node_data,
-            "width": self.node_width,
-            "height": self.node_height,
-            "position": position,
-            "dragging": False,
-            "selected": False,
-            "positionAbsolute": position
-        }
-        
-    def _create_prompt_nodes(self, prompts: List[Dict]) -> List[Dict]:
-        """Create nodes from voice prompts with full data structure"""
-        nodes = []
-        
-        for idx, prompt in enumerate(prompts):
-            position = self._calculate_position(self.current_level, idx)
-            
-            # Handle string content
-            if isinstance(prompt, str):
-                prompt_text = prompt
-                prompt_data = {"prompt": prompt_text}
-            else:
-                prompt_text = prompt.get("prompt", "")
-                prompt_data = prompt
-            
-            node_data = {
-                "name": self._generate_node_name(prompt_data),
-                "active": False,
-                "prompt": prompt_text,
-                "condition": self._extract_condition(prompt_data),
-                "globalPrompt": self._get_global_prompt(),
-                "modelOptions": self._get_model_options(prompt_data)
-            }
-            
-            # Add prompt ID if available
-            if isinstance(prompt, dict) and prompt.get("output_id"):
-                node_data["promptId"] = prompt["output_id"]
-            
-            # Determine if this is a special node type
-            node_type = self._determine_node_type(prompt_data)
-            
-            # Add transfer number for transfer nodes
-            if node_type == NodeType.TRANSFER_CALL:
-                node_data["transferNumber"] = self._extract_transfer_number(prompt_data)
-            
-            node = {
-                "id": str(uuid.uuid4()),
-                "type": node_type.value,
-                "data": node_data,
-                "width": self.node_width,
-                "height": self.node_height,
-                "position": position,
-                "dragging": False,
-                "selected": False,
-                "positionAbsolute": position
-            }
-            
-            nodes.append(node)
-            
-        self.current_level += 1
-        return nodes
-        
-    def _create_edges(self, nodes: List[Dict]) -> List[Dict]:
-        """Create edges between nodes with enhanced metadata"""
-        edges = []
-        
-        for i, source_node in enumerate(nodes[:-1]):
-            for target_node in nodes[i+1:]:
-                # Skip invalid connections
-                if target_node["data"].get("isStart"):
-                    continue
-                    
-                edge_id = f"reactflow__edge-{source_node['id']}-{target_node['id']}"
-                
-                # Generate meaningful edge metadata
-                edge_data = self._generate_edge_metadata(source_node, target_node)
-                
-                edge = {
-                    "id": edge_id,
-                    "source": source_node["id"],
-                    "target": target_node["id"],
-                    "type": "custom",
-                    "animated": True,
-                    "data": edge_data,
-                    "selected": False,
-                    "sourceHandle": None,
-                    "targetHandle": None
+    def _parse_content(self, content: Union[str, Dict]) -> Dict:
+        """Parse content into a standardized format"""
+        if isinstance(content, str):
+            try:
+                return json.loads(content)
+            except json.JSONDecodeError:
+                return {
+                    "prompt": content,
+                    "type": NodeType.DEFAULT.value
                 }
-                edges.append(edge)
-        
-        return edges
-        
-    def _calculate_position(self, level: int, index: int) -> Dict[str, int]:
-        """Calculate node position based on level and index with proper spacing"""
-        x = index * (self.horizontal_spacing + self.node_width) + self.horizontal_spacing
-        y = level * (self.vertical_spacing + self.node_height) + self.vertical_spacing
-        return {
-            "x": x,
-            "y": y
-        }
-        
-    def _determine_node_type(self, content: Dict) -> NodeType:
-        """Determine the appropriate node type based on content"""
-        # Handle string content
-        if isinstance(content, str):
-            content_str = content.lower()
-            content_dict = {}
-        else:
-            content_str = str(content).lower()
-            content_dict = content
-        
-        # Check for global nodes first
-        if content_dict.get("isGlobal", False):
-            return NodeType.GLOBAL
-        
-        # Check for transfer nodes
-        if "transfer" in content_str or content_dict.get("transferNumber"):
-            return NodeType.TRANSFER_CALL
-        
-        # Check for end nodes
-        if "end" in content_str or content_dict.get("isEnd", False):
-            return NodeType.END_CALL
-        
-        # Check for knowledge base nodes
-        if "knowledge" in content_str or content_dict.get("kb_id"):
-            return NodeType.KNOWLEDGE_BASE
-        
-        # Check for webhook nodes
-        if "webhook" in content_str or content_dict.get("webhook_url"):
-            return NodeType.WEBHOOK
-        
-        return NodeType.DEFAULT
-        
-    def _is_error_handling(self, content: Dict) -> bool:
-        """Determine if content represents error handling"""
-        error_keywords = ["error", "exception", "fail", "frustration", "complaint"]
-        content_str = str(content).lower()
-        return any(keyword in content_str for keyword in error_keywords)
-        
-    def _generate_greeting_prompt(self) -> str:
-        """Generate initial greeting prompt"""
-        return "Introduce yourself and establish the purpose of the call. Ask if they have a moment to talk."
-        
-    def _get_global_prompt(self) -> str:
-        """Get global prompt for all nodes"""
-        return "Maintain a professional and helpful demeanor throughout the conversation. Be ready to transfer to a human assistant if needed. Listen actively and adapt your responses based on the user's engagement level."
-        
-    def _generate_node_name(self, content: Union[Dict, str]) -> str:
-        """Generate descriptive node name based on content"""
-        if isinstance(content, str):
-            # Generate name from first few words of string
-            words = content.split()[:3]
-            return " ".join(words) + "..."
-        elif "name" in content:
-            return content["name"]
-        elif "type" in content:
-            return content["type"].title()
-        elif "prompt" in content:
-            # Generate name from first few words of prompt
-            words = content["prompt"].split()[:3]
-            return " ".join(words) + "..."
-        else:
-            return "Conversation Node"
-            
-    def _extract_prompt(self, content: Dict) -> str:
-        """Extract or generate prompt from content"""
-        if "prompt" in content:
-            return content["prompt"]
-        elif "text" in content:
-            return content["text"]
-        else:
-            return "Continue the conversation based on the user's response."
-            
-    def _extract_condition(self, content: Union[Dict, str]) -> str:
-        """Extract or generate condition from content"""
-        if isinstance(content, str):
-            return "Proceed based on user's response and engagement level."
-        elif "condition" in content:
-            return content["condition"]
-        else:
-            return "Proceed based on user's response and engagement level."
-            
-    def _get_model_options(self, content: Optional[Union[Dict, str]] = None) -> Dict:
-        """Get model options, potentially customized based on content"""
-        options = ModelOptions()
-        if isinstance(content, dict) and "model_options" in content:
-            # Update options based on content
-            content_options = content["model_options"]
-            options.temperature = content_options.get("temperature", options.temperature)
-            options.skip_user_response = content_options.get("skip_user_response", options.skip_user_response)
-            options.block_interruptions = content_options.get("block_interruptions", options.block_interruptions)
-        return options.to_dict()
-        
-    def _extract_transfer_number(self, content: Union[Dict, str]) -> str:
-        """Extract transfer number from content"""
-        if isinstance(content, dict) and "transfer_number" in content:
-            return content["transfer_number"]
-        return "+1234567890"  # Default transfer number
-        
-    def _generate_error_prompt(self, error: Dict) -> str:
-        """Generate prompt for error handling"""
-        error_type = error.get("type", "issue")
-        return f"I apologize for any {error_type}. Let me help address your concerns or connect you with someone who can assist further."
-        
-    def _generate_error_condition(self, error: Dict) -> str:
-        """Generate condition for error handling"""
-        return f"Triggered when user expresses {error.get('type', 'dissatisfaction')} or requests escalation."
-        
-    def _find_target_nodes(self, source_node: Dict, nodes: List[Dict]) -> List[Dict]:
-        """Find appropriate target nodes for edges"""
-        # Skip global nodes as targets unless specifically connected
-        potential_targets = [
-            n for n in nodes 
-            if n["id"] != source_node["id"]
-            and not n["data"].get("isGlobal", False)
-        ]
-        
-        # Logic to determine valid targets based on node types and positions
-        valid_targets = []
-        source_level = source_node["position"]["y"] // self.vertical_spacing
-        
-        for target in potential_targets:
-            target_level = target["position"]["y"] // self.vertical_spacing
-            
-            # Only connect to nodes in the next level or error handling nodes
-            if (target_level == source_level + 1 or 
-                target["type"] == NodeType.TRANSFER_CALL.value):
-                valid_targets.append(target)
-                
-        return valid_targets
-        
-    def _generate_edge_metadata(self, source_node: Dict, target_node: Dict) -> Dict:
-        """Generate descriptive metadata for edges"""
-        
-        # Handle special cases first
-        if target_node["type"] == NodeType.END_CALL.value:
-            return {
-                "label": "End Conversation",
-                "description": "Conclude the conversation appropriately",
-                "condition": "User ready to end conversation"
-            }
-            
-        if target_node["type"] == NodeType.TRANSFER_CALL.value:
-            return {
-                "label": "Transfer to Human",
-                "description": "Transfer call to human assistant",
-                "condition": "Issue requires human intervention"
-            }
-            
-        # Default progression
-        return {
-            "label": "Continue",
-            "description": "Progress to next conversation step",
-            "condition": "User engaged and conversation flowing"
-        }
-        
-    def _validate_pathway_structure(self, nodes: List[Dict], edges: List[Dict]) -> None:
-        """Validate the pathway structure meets Bland AI requirements"""
-        # Check for required node fields
-        required_node_fields = {"id", "type", "data", "position"}
-        required_data_fields = {"name", "prompt"}
-        
-        for node in nodes:
-            missing_fields = required_node_fields - set(node.keys())
-            if missing_fields:
-                raise ValueError(f"Node missing required fields: {missing_fields}")
-                
-            missing_data = required_data_fields - set(node["data"].keys())
-            if missing_data:
-                raise ValueError(f"Node data missing required fields: {missing_data}")
-                
-        # Validate edges
-        required_edge_fields = {"id", "source", "target", "type"}
-        node_ids = {node["id"] for node in nodes}
-        
-        for edge in edges:
-            missing_fields = required_edge_fields - set(edge.keys())
-            if missing_fields:
-                raise ValueError(f"Edge missing required fields: {missing_fields}")
-                
-            # Validate edge connections
-            if edge["source"] not in node_ids:
-                raise ValueError(f"Edge references non-existent source node: {edge['source']}")
-            if edge["target"] not in node_ids:
-                raise ValueError(f"Edge references non-existent target node: {edge['target']}")
-        
-    def _create_global_nodes(self) -> List[Dict]:
-        """Create global nodes for error handling and frustration"""
+        return dict(content)
+
+    def _generate_nodes(self, grouped_outputs: Dict) -> List[Dict]:
+        """Generate all nodes for the pathway"""
         nodes = []
         
-        # Create global frustration handler
-        frustration_node = {
-            "id": str(uuid.uuid4()),
-            "type": NodeType.DEFAULT.value,
-            "data": {
-                "name": "Global Frustration Handler",
-                "active": False,
-                "prompt": "Apologize for any frustration caused. Offer to transfer the call to a human assistant who can better address their concerns.",
-                "isGlobal": True,
-                "globalLabel": "User expresses frustration",
-                "globalPrompt": self._get_global_prompt(),
-                "modelOptions": ModelOptions().to_dict(),
-                "globalDescription": "This node is triggered if at any point the user expresses frustration or explicitly asks to speak to a human."
-            },
-            "width": self.node_width,
-            "height": self.node_height,
-            "position": self._calculate_position(self.current_level + 1, 0),
-            "dragging": False,
-            "selected": False
-        }
-        nodes.append(frustration_node)
+        # 1. Create start node
+        start_prompt = (grouped_outputs["voice_prompts"][0]["prompt"] 
+                       if grouped_outputs["voice_prompts"] else None)
+        nodes.append(self.node_generator.create_start_node(start_prompt))
+        
+        # 2. Create main conversation nodes
+        for prompt in grouped_outputs["voice_prompts"][1:]:  # Skip first prompt (used in start)
+            node = self.node_generator.create_node(
+                prompt_text=prompt["prompt"],
+                node_type=NodeType(prompt.get("type", NodeType.DEFAULT.value))
+            )
+            nodes.append(node)
+        
+        # 3. Create global handler nodes
+        for handler in grouped_outputs["global_handlers"]:
+            node = self.node_generator.create_node(
+                prompt_text=handler["prompt"],
+                node_type=NodeType.DEFAULT,
+                is_global=True
+            )
+            nodes.append(node)
+        
+        # 4. Create end nodes
+        end_types = ["success", "rejection", "transfer"]
+        for end_type in end_types:
+            node = self.node_generator.create_end_node(
+                node_type=end_type,
+                position={"x": 0, "y": 0}  # Position will be set by PositionManager
+            )
+            nodes.append(node)
         
         return nodes
-
-    def _generate_node_name_from_prompt(self, prompt_text: str) -> str:
-        """Generate a descriptive node name from the prompt text using GPT-4-mini"""
+        
+    def update_node(self, node_id: str, updates: Dict) -> Optional[Dict]:
+        """
+        Update an existing node with new data
+        Returns the updated node if successful, None if validation fails
+        """
         try:
-            client = OpenAI()
+            # Get existing node data
+            if node_id not in self.nodes:
+                logger.error(f"Node {node_id} not found")
+                return None
+            
+            node = self.nodes[node_id].copy()
+            
+            # Apply updates
+            if "data" in updates:
+                node["data"].update(updates["data"])
+            if "position" in updates:
+                node["position"].update(updates["position"])
+                node["positionAbsolute"].update(updates["position"])
+            
+            # Validate updated node
+            errors = self.validator._validate_basic_structure([node], [])
+            if errors:
+                logger.error(f"Invalid node update: {errors}")
+                return None
+            
+            # Update storage
+            self.nodes[node_id] = node
+            return node
+            
+        except Exception as e:
+            logger.error(f"Failed to update node: {str(e)}")
+            return None
+
+    def delete_node(self, node_id: str) -> bool:
+        """
+        Delete a node and its connected edges
+        Returns True if successful, False otherwise
+        """
+        try:
+            # Remove node
+            if node_id not in self.nodes:
+                return False
+            
+            del self.nodes[node_id]
+            
+            # Remove connected edges
+            edges_to_remove = []
+            for edge_id, edge in self.edges.items():
+                if edge["source"] == node_id or edge["target"] == node_id:
+                    edges_to_remove.append(edge_id)
+            
+            for edge_id in edges_to_remove:
+                del self.edges[edge_id]
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to delete node: {str(e)}")
+            return False
+
+    def add_edge(self, source_id: str, target_id: str) -> Optional[Dict]:
+        """
+        Add a new edge between nodes
+        Returns the created edge if successful, None if validation fails
+        """
+        try:
+            # Validate nodes exist
+            if source_id not in self.nodes or target_id not in self.nodes:
+                return None
+            
+            source_node = self.nodes[source_id]
+            target_node = self.nodes[target_id]
+            
+            # Create edge
+            edge = self.edge_manager.create_edge(source_node, target_node)
+            if not edge:
+                return None
+            
+            # Validate new edge
+            errors = self.validator._validate_node_connections(
+                list(self.nodes.values()),
+                list(self.edges.values()) + [edge]
+            )
+            if errors:
+                return None
+            
+            # Add to storage
+            self.edges[edge["id"]] = edge
+            return edge
+            
+        except Exception as e:
+            logger.error(f"Failed to add edge: {str(e)}")
+            return None
+
+    def delete_edge(self, edge_id: str) -> bool:
+        """
+        Delete an edge
+        Returns True if successful, False otherwise
+        """
+        try:
+            if edge_id not in self.edges:
+                return False
+            
+            del self.edges[edge_id]
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to delete edge: {str(e)}")
+            return False
+
+    def _call_gpt4(self, prompt: str) -> str:
+        """Call GPT-4 with a prompt and return the response"""
+        try:
+            api_key = os.getenv("OPENAI_API_KEY")
+            if not api_key:
+                raise ValueError("OPENAI_API_KEY environment variable not set")
+            
+            client = OpenAI(api_key=api_key)
             response = client.chat.completions.create(
-                model="gpt-4-0125-preview",
+                model="gpt-4o-mini",
                 messages=[
-                    {"role": "system", "content": "Generate a short, descriptive name (2-4 words) for a conversation node based on its prompt. The name should capture the main intent or action of the prompt."},
-                    {"role": "user", "content": f"Prompt: {prompt_text}"}
+                    {"role": "system", "content": "You are an expert conversation designer for AI voice agents."},
+                    {"role": "user", "content": prompt}
                 ],
                 temperature=0.2,
-                max_tokens=20
+                max_tokens=50
             )
-            node_name = response.choices[0].message.content.strip().strip('"')
-            logger.info(f"Generated node name: {node_name} for prompt: {prompt_text[:50]}...")
-            return node_name
+            return response.choices[0].message.content.strip()
         except Exception as e:
-            logger.error(f"Failed to generate node name: {str(e)}")
-            return "Conversation Node"
+            logger.error(f"Error calling GPT-4: {str(e)}")
+            raise
+
+    def _generate_node_name_from_prompt(self, prompt_text: str) -> str:
+        """Generate a semantic name for a node based on its prompt text"""
+        try:
+            # Enhanced prompt for semantic name generation
+            prompt = f"""
+            Generate a concise and descriptive name (2-4 words) for this node that reflects:
+            1. The primary intent (e.g., Inquiry Handling, Objection Resolution)
+            2. The phase of the conversation (e.g., Introduction, Deep Dive)
+            3. The expected outcome (e.g., Agreement, Information Gathering)
+
+            The name should be professional and clearly indicate the node's role in the conversation.
+            
+            Example transformations:
+            - "How are you doing today?" -> "Initial Rapport Building"
+            - "Let me tell you about our pricing" -> "Value Proposition Introduction"
+            - "Would you like to proceed?" -> "Commitment Decision Point"
+            - "I understand your concern about the cost" -> "Budget Objection Resolution"
+            
+            Prompt to name: {prompt_text}
+            
+            Generate only the name, no explanation.
+            """
+            
+            # Call GPT-4 with the enhanced prompt
+            response = self._call_gpt4(prompt)
+            
+            # Clean and validate the response
+            name = response.strip().replace('"', '').replace("'", "")
+            if not name:
+                raise ValueError("Empty name generated")
+            
+            logger.info(f"Generated node name: {name} for prompt: {prompt_text[:50]}...")
+            return name
+        
+        except Exception as e:
+            logger.error(f"Error generating node name: {str(e)}")
+            return "Conversation Node"  # Fallback name
 
     def _generate_structured_pathway(self, outputs: List[Dict]) -> Dict:
         try:
@@ -659,8 +396,7 @@ class PathwayStructureTransformer:
                         content = {"text": content}
                 elif not isinstance(content, dict):
                     content = {"text": str(content)}
-                
-                if output.get("output_type") == "voice_prompt":
+                elif output.get("output_type") == "voice_prompt":
                     # Extract prompt text safely
                     prompt_text = content.get("text")
                     if not prompt_text and isinstance(content, dict):
@@ -813,3 +549,85 @@ class PathwayStructureTransformer:
                 return True
                 
         return False
+
+    def _generate_node_intent(self, node_name: str, prompt_text: str) -> str:
+        """Generate primary conversational intent for the node"""
+        try:
+            prompt = f"""
+            Based on the node name '{node_name}' and prompt text '{prompt_text}',
+            generate a clear, one-sentence statement of this node's primary conversational intent.
+            Focus on what the AI agent aims to achieve in this step.
+            """
+            return self._call_gpt4(prompt).strip()
+        except Exception as e:
+            logger.error(f"Error generating node intent: {str(e)}")
+            return "Progress the conversation effectively"
+
+    def _generate_success_condition(self, node_name: str) -> str:
+        """Generate success condition based on node name"""
+        name_lower = node_name.lower()
+        
+        if "discovery" in name_lower:
+            return "User provides clear information about their needs or situation"
+        elif "value" in name_lower:
+            return "User shows interest in the proposed value or benefits"
+        elif "objection" in name_lower:
+            return "User's concerns are successfully addressed"
+        elif "commitment" in name_lower:
+            return "User agrees to proceed or take next steps"
+        else:
+            return "User engages positively and conversation progresses naturally"
+
+    def _generate_failure_condition(self, node_name: str) -> str:
+        """Generate failure condition based on node name"""
+        name_lower = node_name.lower()
+        
+        if "discovery" in name_lower:
+            return "User refuses to share information or shows strong disinterest"
+        elif "value" in name_lower:
+            return "User explicitly rejects the proposed value or shows clear disinterest"
+        elif "objection" in name_lower:
+            return "User's objection intensifies or new serious objections arise"
+        elif "commitment" in name_lower:
+            return "User explicitly declines to proceed or requests to end conversation"
+        else:
+            return "User shows clear signs of disengagement or resistance"
+
+    def _generate_expected_outcomes(self, node_name: str) -> List[str]:
+        """Generate list of possible outcomes based on node name"""
+        name_lower = node_name.lower()
+        
+        base_outcomes = ["positive_progression", "needs_clarification", "resistance_detected"]
+        
+        if "discovery" in name_lower:
+            return base_outcomes + ["information_gathered", "deeper_exploration_needed"]
+        elif "value" in name_lower:
+            return base_outcomes + ["value_accepted", "objection_raised"]
+        elif "objection" in name_lower:
+            return base_outcomes + ["objection_resolved", "escalation_needed"]
+        elif "commitment" in name_lower:
+            return base_outcomes + ["commitment_secured", "further_discussion_needed"]
+        else:
+            return base_outcomes
+
+    def _generate_transition_triggers(self, node_name: str) -> List[str]:
+        """Generate list of transition triggers based on node name"""
+        name_lower = node_name.lower()
+        
+        base_triggers = [
+            "explicit_agreement",
+            "explicit_disagreement",
+            "confusion_expressed",
+            "more_information_requested"
+        ]
+        
+        if "discovery" in name_lower:
+            return base_triggers + ["need_expressed", "resistance_to_sharing"]
+        elif "value" in name_lower:
+            return base_triggers + ["benefit_interest", "value_objection"]
+        elif "objection" in name_lower:
+            return base_triggers + ["satisfaction_expressed", "escalation_requested"]
+        elif "commitment" in name_lower:
+            return base_triggers + ["ready_to_proceed", "need_more_time"]
+        else:
+            return base_triggers

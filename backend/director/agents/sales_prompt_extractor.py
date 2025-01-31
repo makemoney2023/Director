@@ -488,10 +488,10 @@ Output your extracted training data as a series of examples, each enclosed in <e
             
             # Use the OpenAI client correctly
             response = self.llm.client.chat.completions.create(
-                model="gpt-4-1106-preview",
+                model="gpt-4o-mini",
                 messages=messages,
                 temperature=0.7,
-                max_tokens=2000
+                max_tokens=4000
             )
             
             # Get the response content
